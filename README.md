@@ -50,7 +50,24 @@ git push -u origin main
 4. Repo: `<TU_USUARIO>/tu-portafolio-ia`, branch `main`, file `app.py`.
 5. Click **Deploy**. Tarda ~2 min y queda en `https://<algo>.streamlit.app`.
 
-> **Nota:** En Streamlit Community Cloud, la SQLite se reinicia con cada redeploy (filesystem efímero). Para persistencia real, en el bloque 2 podemos migrar a Postgres en Supabase.
+## Persistencia: Supabase (Postgres gratis)
+
+En Streamlit Cloud el filesystem es **efímero**: la SQLite se borra en cada redeploy. Para usar la app con clientes reales sin perder los datos, conectala a un Postgres gratuito en Supabase:
+
+1. Creá cuenta en [supabase.com](https://supabase.com/) y un proyecto nuevo.
+2. **Project Settings → Database → Connection string → URI** (Session mode, puerto 5432).
+3. Reemplazá `[YOUR-PASSWORD]` por la password de la DB del proyecto.
+4. En Streamlit Cloud: **App settings → Secrets**, agregá:
+   ```toml
+   DATABASE_URL = "postgresql://postgres:tu-password@db.tu-proyecto.supabase.co:5432/postgres"
+   GEMINI_API_KEY = "AIza..."
+   ```
+5. La app detecta automáticamente la URL y se conecta a Postgres. El primer arranque crea las tablas (`portfolios`, `tenencias`, `transacciones`) y un portfolio "Portafolio principal".
+6. Para verificar: en la app, abrí el ⚙ del header — vas a ver un indicador verde "Conectado a Postgres".
+
+> **Free tier de Supabase**: 500 MB de storage y 2 proyectos. Suficiente para cientos de clientes con sus tenencias.
+
+Si no configurás `DATABASE_URL`, la app cae automáticamente a SQLite local — útil para desarrollo, pero **no usar en Cloud para clientes reales**.
 
 ## Estructura
 

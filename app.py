@@ -8,7 +8,7 @@ from streamlit_option_menu import option_menu
 
 from core.db import (
     init_db, list_portfolios, create_portfolio, rename_portfolio,
-    delete_portfolio,
+    delete_portfolio, db_backend,
 )
 from core.active_portfolio import (
     get_active_portfolio_id, set_active_portfolio, get_active_portfolio_info,
@@ -86,6 +86,18 @@ with col_pf:
                 st.rerun()
     with btn_col:
         with st.popover("⚙", use_container_width=True):
+            # Indicador de backend de persistencia (discreto, arriba)
+            backend = db_backend()
+            if backend == "postgres":
+                st.success("Conectado a Postgres (persistencia activa)",
+                           icon="🟢")
+            else:
+                st.warning(
+                    "Usando SQLite local. En Streamlit Cloud se borra en cada "
+                    "redeploy — configurá `DATABASE_URL` en Secrets para usar "
+                    "Postgres (Supabase).",
+                    icon="🟡",
+                )
             st.markdown("**Gestionar clientes / portfolios**")
             info = get_active_portfolio_info()
 

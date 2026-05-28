@@ -1,17 +1,22 @@
 """
-Persistencia en SQLite via SQLAlchemy.
-Modelos: Portfolio, Tenencia, Transaccion.
+Persistencia via SQLAlchemy. Soporta Postgres (Supabase) y SQLite.
 
-Multi-portfolio: cada Tenencia pertenece a un Portfolio. Si la DB ya existia
-sin la columna portfolio_id, se hace migracion automatica no destructiva
-(ALTER TABLE + asignacion al portfolio "default").
+Backend automatico:
+- Si DATABASE_URL existe en st.secrets o env -> usa esa URL (Postgres tipico).
+- Si no -> fallback a SQLite local en data/portfolio.db (para desarrollo).
+
+Para Supabase, la URL viene en el formato:
+    postgresql://postgres:[password]@db.[project].supabase.co:5432/postgres
+
+Modelos: Portfolio, Tenencia, Transaccion.
+Multi-portfolio: cada Tenencia pertenece a un Portfolio.
 """
 import os
 from datetime import datetime, date
-from typing import List
+from typing import List, Optional
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, Date, DateTime,
-    ForeignKey, select, inspect,
+    ForeignKey, select, inspect, text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
@@ -19,9 +24,55 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "data", "portfolio.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False, future=True)
+
+def _get_database_url() -> str:
+    """
+    Prioridad:
+    1. st.secrets["DATABASE_URL"] (Streamlit Cloud)
+    2. os.environ["DATABASE_URL"] (local con .env)
+    3. SQLite local (fallback de desarrollo)
+    """
+    # 1. Streamlit secrets (solo si hay runtime activo)
+    try:
+        import streamlit as st
+        url = st.secrets.get("DATABASE_URL")
+        if url:
+            return _normalize_url(url)
+    except Exception:
+        pass
+    # 2. Env var
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return _normalize_url(url)
+    # 3. Fallback SQLite
+    return f"sqlite:///{DB_PATH}"
+
+
+def _normalize_url(url: str) -> str:
+    """Acepta 'postgres://' o 'postgresql://'; SQLAlchemy quiere 'postgresql://'."""
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+DATABASE_URL = _get_database_url()
+_is_postgres = DATABASE_URL.startswith("postgresql")
+
+# pool_pre_ping para detectar conexiones muertas (importante en Postgres
+# detras de un PgBouncer). Para SQLite no aplica pero no rompe.
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 Base = declarative_base()
+
+
+def db_backend() -> str:
+    """'postgres' o 'sqlite' - para mostrar en la UI / logs."""
+    return "postgres" if _is_postgres else "sqlite"
 
 
 class Portfolio(Base):
