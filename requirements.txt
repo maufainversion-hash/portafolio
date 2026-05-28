@@ -13,3 +13,4 @@ google-genai==2.6.0
 fpdf2==2.8.7
 markdown==3.10.2
 matplotlib==3.10.9
+xlsxwriter==3.2.9

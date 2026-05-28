@@ -135,7 +135,39 @@ def render():
     st.divider()
     _render_detalle_ticker(df_val)
 
+    # Export Excel
+    st.divider()
+    _render_export_excel()
+
     st.caption("Gestiona tus tenencias (alta/baja) desde el tab **Cartera**.")
+
+
+def _render_export_excel():
+    """Botón para descargar el reporte completo en Excel."""
+    from datetime import datetime
+    from core.excel import build_excel_report
+    col_b, col_d = st.columns([2, 5])
+    with col_b:
+        with st.spinner("Generando Excel..."):
+            try:
+                xlsx_bytes = build_excel_report()
+            except Exception as e:
+                st.error(f"Error al generar Excel: {e}")
+                return
+        nombre = f"portafolio_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        st.download_button(
+            "📊 Exportar Excel completo",
+            data=xlsx_bytes,
+            file_name=nombre,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+        )
+    with col_d:
+        st.caption(
+            "Excel con 5 hojas: Resumen, Posiciones, Performance, Benchmarks "
+            "y Equity vs BMs. Incluye gráficos nativos editables en Excel."
+        )
 
 
 # Labels visibles e icono por tipo
