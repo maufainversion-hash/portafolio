@@ -109,32 +109,38 @@ with col_pf:
             if info:
                 st.divider()
                 st.markdown(f"*Editar el activo: **{info['nombre']}***")
+                # Form de edicion (no se pueden anidar columns dentro de form
+                # en popover; usamos botones en linea)
                 with st.form("editar_pf"):
                     nombre_e = st.text_input("Nombre", value=info["nombre"])
                     cliente_e = st.text_input("Cliente", value=info["cliente"] or "")
                     notas_e = st.text_input("Notas", value=info["notas"] or "")
-                    ce, cb = st.columns(2)
-                    with ce:
-                        if st.form_submit_button("Guardar",
-                                                 use_container_width=True):
-                            try:
-                                rename_portfolio(info["id"], nombre_e,
-                                                 cliente_e, notas_e)
-                                st.success("Actualizado.")
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e))
-                    with cb:
-                        if st.form_submit_button("🗑 Eliminar este",
-                                                 use_container_width=True,
-                                                 help="Borra el portfolio y todas sus tenencias"):
-                            try:
-                                delete_portfolio(info["id"])
-                                st.session_state["active_portfolio_id"] = None
-                                st.success("Eliminado.")
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e))
+                    if st.form_submit_button("Guardar cambios", type="primary",
+                                             use_container_width=True):
+                        try:
+                            rename_portfolio(info["id"], nombre_e,
+                                             cliente_e, notas_e)
+                            st.success("Actualizado.")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+
+                # Boton eliminar afuera del form, con confirmacion
+                confirma = st.checkbox(
+                    f"Si, quiero eliminar '{info['nombre']}' y sus {info['n_tenencias']} tenencias",
+                    key=f"confirm_del_{info['id']}",
+                )
+                if st.button("🗑 Eliminar este portfolio",
+                             use_container_width=True,
+                             disabled=not confirma,
+                             type="secondary"):
+                    try:
+                        delete_portfolio(info["id"])
+                        st.session_state["active_portfolio_id"] = None
+                        st.success("Eliminado.")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
 
 with col_ccy:
     st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
