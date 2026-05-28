@@ -1,0 +1,236 @@
+"""
+Cliente de Google Gemini para generar reportes de portafolio institucionales.
+
+API key:
+- Streamlit Cloud: st.secrets["GEMINI_API_KEY"]
+- Local: env var GEMINI_API_KEY o input en la UI (cached en session_state)
+
+Uso:
+    from core.ai import generate_report_stream
+    for chunk in generate_report_stream(context_dict, kind="completo"):
+        st.write(chunk)
+"""
+from __future__ import annotations
+import os
+import json
+from typing import Iterator, Optional
+import streamlit as st
+
+
+# Modelo por default. Se puede sobrescribir desde la UI.
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+# Modelos disponibles (label -> id)
+MODELOS = {
+    "Gemini 2.5 Flash (rapido)":  "gemini-2.5-flash",
+    "Gemini 2.5 Pro (profundo)":  "gemini-2.5-pro",
+}
+
+
+SYSTEM_PROMPT = """Eres un Senior Portfolio Manager con experiencia combinada de:
+- Equity Research Analyst (cobertura institucional)
+- Quantitative Analyst (factor models, risk attribution)
+- Financial Writer (estilo Bloomberg / Morningstar / JP Morgan / BlackRock)
+
+Tu rol es generar reportes institucionales sobre portafolios de inversion
+argentinos/globales, con calidad equivalente a research de wealth management
+premium (Bloomberg, Morningstar, JPM, BlackRock Aladdin, Goldman PWM, Koyfin,
+MSCI Analytics).
+
+INPUT
+Recibis un objeto JSON con metricas YA pre-calculadas por el backend:
+posiciones valuadas, P&L nominal y real, equity curve summary, volatilidad,
+correlaciones, exposiciones, contexto macro argentino, etc.
+
+REGLAS DURAS
+1. NUNCA recalcules metricas que ya vienen. Interpreta, contextualiza,
+   detecta patrones, explica.
+2. NUNCA inventes datos. Si una metrica no esta en el JSON, decilo explicito
+   ("dato no disponible en este corte"). Trabaja con lo que hay.
+3. NUNCA des consejos especificos de compra/venta individuales. Usa lenguaje
+   institucional: "podria considerarse", "seria razonable evaluar", "una
+   reduccion marginal de exposicion a X mejoraria el perfil de riesgo".
+4. NUNCA uses emojis. NUNCA lenguaje informal o frases infantiles.
+5. SI uses lenguaje financiero profesional, sofisticado, elegante.
+
+ESTILO
+- Markdown limpio. Titulos jerarquicos (## seccion / ### subseccion), bullets,
+  tablas cuando aplique.
+- Cada seccion tiene que aportar insight, no solo describir.
+- Detecta concentraciones peligrosas, correlaciones altas, sesgos sectoriales,
+  exposicion cambiaria, falta de diversificacion real ("falsa diversificacion").
+- En contexto argentino entendes: inflacion, dolar (MEP/CCL/blue/cripto/oficial),
+  riesgo pais EMBI, tasas, devaluacion, CEDEARs como cobertura cambiaria,
+  bonos hard dollar (AE38, GD30, AL30), bonos CER, cobertura inflacionaria.
+
+OUTPUT
+Markdown profesional. Lenguaje en espanol rioplatense neutral (no anglicismos
+forzados, no traduces "Sharpe" o "drawdown" - se usan asi). Estructura segun
+el USER PROMPT (la cantidad y orden de secciones la dicta el tipo de reporte).
+"""
+
+
+# Templates de USER PROMPT por tipo de reporte
+KINDS = {
+    "completo": {
+        "label": "Reporte completo",
+        "description": "Las 10 secciones del framework institucional",
+        "sections": [
+            "1. Executive Summary",
+            "2. Portfolio Snapshot (valor, retornos, vol, Sharpe, Sortino, MaxDD, beta, alpha, VaR, concentracion top holdings)",
+            "3. Performance Analysis (absoluto, relativo, benchmark, attribution, winners & losers, momentum, consistency)",
+            "4. Risk Analysis (volatilidad, drawdowns, downside risk, concentracion, correlaciones, sectorial, geografica, monetaria, sensibilidad)",
+            "5. Diversification Analysis (real vs falsa diversificacion, overlap sectorial/geografico/cambiario)",
+            "6. Argentine Macro Context (inflacion, dolar, riesgo pais, tasas, exposicion ARS, cobertura cambiaria/inflacionaria)",
+            "7. Rebalancing Suggestions (racional institucional, no consejos directos)",
+            "8. Scenario & Stress Testing (caida S&P, suba tasas USA, crisis AR, devaluacion ARS, caida commodities, rally tech)",
+            "9. AI Insights (dependencias ocultas, sesgos, exposicion indirecta, riesgos no obvios, fortalezas estrategicas)",
+            "10. Final Portfolio Assessment (evaluacion general, score, calidad, resiliencia)",
+        ],
+    },
+    "executive": {
+        "label": "Executive brief",
+        "description": "Resumen ejecutivo en una pagina",
+        "sections": [
+            "1. Executive Summary",
+            "2. Portfolio Snapshot",
+            "9. AI Insights (3-5 insights clave)",
+            "10. Final Portfolio Assessment",
+        ],
+    },
+    "riesgo": {
+        "label": "Foco en riesgo",
+        "description": "Profundizacion en risk management",
+        "sections": [
+            "1. Executive Summary (focused on risk)",
+            "4. Risk Analysis (extensivo)",
+            "5. Diversification Analysis",
+            "8. Scenario & Stress Testing",
+            "9. AI Insights de riesgo",
+        ],
+    },
+    "macro": {
+        "label": "Foco macro AR",
+        "description": "Posicionamiento ante el contexto argentino",
+        "sections": [
+            "1. Executive Summary",
+            "6. Argentine Macro Context (extensivo)",
+            "4. Risk Analysis (con foco en exposicion cambiaria/inflacionaria)",
+            "7. Rebalancing Suggestions (foco en cobertura)",
+        ],
+    },
+    "rebalanceo": {
+        "label": "Foco en rebalanceo",
+        "description": "Plan de optimizacion del portafolio",
+        "sections": [
+            "1. Executive Summary",
+            "5. Diversification Analysis",
+            "7. Rebalancing Suggestions (extensivo, con racional cuantitativo)",
+            "9. AI Insights de optimizacion",
+        ],
+    },
+}
+
+
+# -----------------------------------------------------------------------------
+# API KEY
+# -----------------------------------------------------------------------------
+def get_api_key() -> Optional[str]:
+    """
+    Busca la API key en orden:
+    1. st.session_state["gemini_api_key"] (input en UI)
+    2. st.secrets["GEMINI_API_KEY"] (Streamlit Cloud)
+    3. os.environ["GEMINI_API_KEY"] (local)
+    """
+    if "gemini_api_key" in st.session_state and st.session_state["gemini_api_key"]:
+        return st.session_state["gemini_api_key"]
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+    return os.environ.get("GEMINI_API_KEY")
+
+
+def has_api_key() -> bool:
+    return bool(get_api_key())
+
+
+# -----------------------------------------------------------------------------
+# GENERACION
+# -----------------------------------------------------------------------------
+def _build_user_prompt(context: dict, kind: str) -> str:
+    """Arma el USER prompt con la estructura solicitada y el context JSON."""
+    kind_info = KINDS.get(kind, KINDS["completo"])
+    sections_md = "\n".join(f"- {s}" for s in kind_info["sections"])
+
+    context_json = json.dumps(context, ensure_ascii=False, indent=2, default=str)
+
+    return f"""Genera un **{kind_info['label']}** sobre el siguiente portafolio.
+
+## Secciones obligatorias (en este orden)
+
+{sections_md}
+
+## Datos del portafolio (JSON)
+
+```json
+{context_json}
+```
+
+## Indicaciones finales
+
+- Comenza el reporte directamente con la primera seccion (sin titulo global).
+- Cada seccion debe aportar interpretacion + insight, no descripcion lineal.
+- Si encontras una concentracion >20% en un solo activo, una correlacion alta
+  con un solo factor, una exposicion cambiaria sesgada o un gap significativo
+  contra benchmarks, destacalo en la seccion correspondiente.
+- En "Argentine Macro Context", considera la brecha cambiaria, la inflacion
+  acumulada YTD/interanual, el riesgo pais EMBI y la evolucion del Merval que
+  vienen en el JSON.
+- En "Final Portfolio Assessment", asigna un score subjetivo (Bajo / Medio /
+  Alto) a: calidad de diversificacion, perfil riesgo-retorno, resiliencia
+  macroeconomica.
+"""
+
+
+def generate_report_stream(context: dict, kind: str = "completo",
+                           model: str = DEFAULT_MODEL) -> Iterator[str]:
+    """
+    Genera un reporte usando Gemini en modo streaming.
+    Yieldea chunks de texto a medida que llegan.
+    Si no hay API key configurada, yieldea un mensaje de error y termina.
+    """
+    api_key = get_api_key()
+    if not api_key:
+        yield ("**Falta configurar la API key de Gemini.** Pega tu key en el "
+               "campo de configuracion de arriba, o configurala en "
+               "`.streamlit/secrets.toml` con `GEMINI_API_KEY = \"...\"`.")
+        return
+
+    try:
+        from google import genai
+        from google.genai import types as gtypes
+    except ImportError:
+        yield "**Falta instalar `google-genai`.** Corre `pip install google-genai`."
+        return
+
+    try:
+        client = genai.Client(api_key=api_key)
+        user_prompt = _build_user_prompt(context, kind)
+
+        response = client.models.generate_content_stream(
+            model=model,
+            contents=user_prompt,
+            config=gtypes.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.4,
+                max_output_tokens=8192,
+            ),
+        )
+        for chunk in response:
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text
+    except Exception as e:
+        yield f"\n\n**Error al generar el reporte:** `{e}`"

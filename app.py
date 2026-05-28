@@ -10,6 +10,7 @@ from core.db import init_db
 from core.ui import inject_css
 from views import (
     dashboard, cartera, allocation, performance, rebalanceo, contexto_ar,
+    research,
 )
 
 
@@ -59,9 +60,10 @@ with col_ccy:
 # Navegacion horizontal estilo screenshot
 selected = option_menu(
     menu_title=None,
-    options=["Dashboard", "Cartera", "Allocation", "Performance", "Rebalanceo", "Contexto AR"],
+    options=["Dashboard", "Cartera", "Allocation", "Performance",
+             "Rebalanceo", "Contexto AR", "Research IA"],
     icons=["bar-chart-fill", "wallet2", "pie-chart-fill", "graph-up-arrow",
-           "sliders", "flag-fill"],
+           "sliders", "flag-fill", "stars"],
     orientation="horizontal",
     default_index=0,
     styles={
@@ -105,3 +107,5 @@ elif selected == "Rebalanceo":
     rebalanceo.render()
 elif selected == "Contexto AR":
     contexto_ar.render()
+elif selected == "Research IA":
+    research.render()
