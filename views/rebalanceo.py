@@ -77,24 +77,36 @@ def render():
 
     st.markdown("### 🎯 Pesos objetivo")
 
-    c_preset, c_reset = st.columns([3, 1])
+    # Inicializar pesos objetivo en session_state con el peso actual si no existen.
+    # Esto evita el warning "widget had value set via Session State API".
+    for tipo in tipos_presentes:
+        key = f"reb_obj_{tipo}"
+        if key not in st.session_state:
+            peso_actual = float(agg[agg["tipo"] == tipo]["peso_actual_pct"].iloc[0])
+            st.session_state[key] = round(peso_actual, 1)
+
+    c_preset, c_apply, c_reset = st.columns([3, 1, 1])
     with c_preset:
         preset = st.selectbox(
             "Preset (opcional)",
             options=["— Personalizado —"] + list(PRESETS.keys()),
             index=0, key="reb_preset",
         )
+    with c_apply:
+        st.markdown("<div style='height:1.75rem;'></div>", unsafe_allow_html=True)
+        aplicar = st.button("Aplicar preset",
+                            use_container_width=True,
+                            disabled=(preset == "— Personalizado —"))
     with c_reset:
         st.markdown("<div style='height:1.75rem;'></div>", unsafe_allow_html=True)
-        if st.button("Resetear a actual", use_container_width=True):
+        if st.button("Resetear", use_container_width=True,
+                     help="Volver a los pesos actuales de la cartera"):
             for t in tipos_presentes:
-                k = f"reb_obj_{t}"
-                if k in st.session_state:
-                    del st.session_state[k]
+                peso_actual = float(agg[agg["tipo"] == t]["peso_actual_pct"].iloc[0])
+                st.session_state[f"reb_obj_{t}"] = round(peso_actual, 1)
             st.rerun()
 
-    # Inicializar pesos objetivo en session_state
-    if preset != "— Personalizado —":
+    if aplicar and preset != "— Personalizado —":
         if preset == "Equal weight":
             base = 100.0 / len(tipos_presentes)
             for t in tipos_presentes:
@@ -102,22 +114,17 @@ def render():
         else:
             for t in tipos_presentes:
                 st.session_state[f"reb_obj_{t}"] = float(PRESETS[preset].get(t, 0))
-        # Reset preset selector despues de aplicar (sin rerun, queda para el proximo render)
+        st.rerun()
 
+    # Render de sliders SOLO con key (sin value=, para evitar conflicto)
     objetivos = {}
     cols = st.columns(min(len(tipos_presentes), 4))
     for i, tipo in enumerate(tipos_presentes):
         label, icon = _TIPO_META.get(tipo, (tipo, "•"))
         with cols[i % len(cols)]:
-            key = f"reb_obj_{tipo}"
-            # Default = peso actual si no hay preset/sesion previa
-            default = st.session_state.get(
-                key,
-                float(agg[agg["tipo"] == tipo]["peso_actual_pct"].iloc[0]),
-            )
             objetivos[tipo] = st.slider(
                 f"{icon} {label}", 0.0, 100.0,
-                value=round(default, 1), step=0.5, key=key,
+                step=0.5, key=f"reb_obj_{tipo}",
                 format="%.1f%%",
             )
 
