@@ -7,11 +7,21 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.portfolio import load_tenencias, equity_curve
+from core.portfolio import load_tenencias, equity_curve, benchmark_curves
 from core.metrics import (
     returns_from_prices, summary, rolling_sharpe, rolling_volatility,
 )
-from core.ui import style_fig
+from core.ui import style_fig, fmt_pct, kpi_card, kpi_row
+
+
+# Paleta por benchmark
+BM_COLORS = {
+    "Portfolio":   "#34d399",
+    "Merval":      "#60a5fa",
+    "SPY (ARS)":   "#a78bfa",
+    "USD MEP":     "#fbbf24",
+    "Inflación":   "#fb7185",
+}
 
 
 PERIODOS = {
@@ -100,6 +110,105 @@ def render():
     style_fig(fig, height=240)
     fig.update_layout(yaxis=dict(title="Drawdown (%)"))
     st.plotly_chart(fig, use_container_width=True)
+
+    # =========================================================================
+    # COMPARATIVA VS BENCHMARKS
+    # =========================================================================
+    st.divider()
+    st.markdown("### 📊 Vs Benchmarks")
+    st.caption(
+        "Tu portfolio comparado contra alternativas pasivas, todo normalizado "
+        "a base 100 al inicio del periodo. Si la linea esta por encima de 100, "
+        "ganaste; si esta abajo, perdiste."
+    )
+
+    seleccion = st.multiselect(
+        "Mostrar",
+        options=["Portfolio", "Merval", "SPY (ARS)", "USD MEP", "Inflación"],
+        default=["Portfolio", "Merval", "SPY (ARS)", "USD MEP", "Inflación"],
+        key="perf_bm_select",
+    )
+
+    with st.spinner("Calculando curvas de benchmarks..."):
+        df_bm = benchmark_curves(period=periodo)
+
+    if df_bm.empty:
+        st.info("No se pudieron calcular las curvas de benchmarks.")
+    else:
+        # KPIs de retorno final por benchmark
+        kpis = []
+        for col in ["Portfolio", "Merval", "SPY (ARS)", "USD MEP", "Inflación"]:
+            if col not in df_bm.columns:
+                continue
+            serie = df_bm[col].dropna()
+            if serie.empty:
+                continue
+            ret = serie.iloc[-1] - 100
+            es_inflacion = (col == "Inflación")
+            # Inflacion "positivo" significa que el peso pierde valor -> negativo para vos
+            kpis.append(kpi_card(
+                col, f"{ret:+.2f}%",
+                delta=None,
+                positive=(ret >= 0) if not es_inflacion else (ret <= 0),
+            ))
+        st.markdown(
+            f'<div class="kpi-grid" style="grid-template-columns:repeat({len(kpis)},1fr);">'
+            f'{"".join(kpis)}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Chart de lineas
+        fig = go.Figure()
+        for col in seleccion:
+            if col not in df_bm.columns:
+                continue
+            serie = df_bm[col].dropna()
+            if serie.empty:
+                continue
+            color = BM_COLORS.get(col, "#9ca3af")
+            # Portfolio mas grueso para destacar
+            width = 3 if col == "Portfolio" else 1.5
+            fig.add_trace(go.Scatter(
+                x=serie.index, y=serie.values, mode="lines",
+                line=dict(color=color, width=width),
+                name=col,
+                hovertemplate=f"<b>{col}</b><br>%{{x|%d %b %Y}}<br>"
+                              f"%{{y:.2f}} ({{:+.2f}}%)<extra></extra>".replace(
+                                  "{:+.2f}", "%{y:.2f}-100"),
+            ))
+
+        # Linea horizontal de referencia en 100
+        fig.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.3)",
+                      annotation_text="base", annotation_position="top right")
+
+        style_fig(fig, height=420)
+        fig.update_layout(
+            yaxis=dict(title="Indice base 100"),
+            legend=dict(orientation="h", y=-0.15, font=dict(size=12)),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Resumen interpretativo
+        if "Portfolio" in df_bm.columns:
+            port_ret = df_bm["Portfolio"].dropna().iloc[-1] - 100
+            comparaciones = []
+            for col in ["Merval", "SPY (ARS)", "USD MEP", "Inflación"]:
+                if col not in df_bm.columns or df_bm[col].dropna().empty:
+                    continue
+                bm_ret = df_bm[col].dropna().iloc[-1] - 100
+                diff = port_ret - bm_ret
+                signo = "ganó" if diff > 0 else "perdió"
+                cls = "pnl-pos" if diff > 0 else "pnl-neg"
+                comparaciones.append(
+                    f"<span class='kpi-delta {cls}' style='margin:.2rem;'>"
+                    f"vs <b>{col}</b>: {signo} <b>{diff:+.2f} pp</b></span>"
+                )
+            if comparaciones:
+                st.markdown(
+                    f"<div style='margin-top:.6rem;'>{''.join(comparaciones)}</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def _line_chart(s: pd.Series, name: str, color: str = "#34d399"):

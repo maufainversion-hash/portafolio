@@ -209,6 +209,25 @@ def get_riesgo_pais() -> Optional[float]:
         return None
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_riesgo_pais_historic() -> pd.DataFrame:
+    """Serie diaria historica del EMBI Argentina. DataFrame [fecha, valor]."""
+    try:
+        r = requests.get(
+            "https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais",
+            timeout=15,
+        )
+        r.raise_for_status()
+        df = pd.DataFrame(r.json())
+        if df.empty:
+            return df
+        df["fecha"] = pd.to_datetime(df["fecha"])
+        df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
+        return df.sort_values("fecha").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_inflacion_mensual() -> pd.DataFrame:
     """Serie mensual de inflacion. DataFrame con columnas: fecha, valor."""

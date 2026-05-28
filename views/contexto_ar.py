@@ -8,7 +8,7 @@ import streamlit as st
 
 from core.data import (
     get_dolares, get_riesgo_pais, get_inflacion_mensual,
-    get_merval, get_history,
+    get_merval, get_history, get_dolar_historic, get_riesgo_pais_historic,
 )
 from core.ui import style_fig, fmt_money, kpi_card, kpi_row
 
@@ -25,8 +25,18 @@ def render():
 
     st.divider()
 
+    # ---------- HISTORICOS DE DOLAR ----------
+    _bloque_dolar_historico()
+
+    st.divider()
+
     # ---------- RIESGO PAIS + MERVAL ----------
     _bloque_riesgo_merval()
+
+    st.divider()
+
+    # ---------- RIESGO PAIS HISTORICO ----------
+    _bloque_riesgo_pais_historico()
 
     st.divider()
 
@@ -50,6 +60,111 @@ def render():
 
     # ---------- INFLACION ----------
     _bloque_inflacion()
+
+
+def _bloque_dolar_historico():
+    """Linea por tipo de dolar en el ultimo año + brecha MEP vs oficial."""
+    st.markdown("**Evolucion historica del dolar — ultimos 12 meses**")
+
+    desde = pd.Timestamp.today() - pd.DateOffset(years=1)
+
+    series = {}
+    for casa, label, color in [
+        ("oficial",         "Oficial",   "#94a3b8"),
+        ("mep",             "MEP",       "#34d399"),
+        ("contadoconliqui", "CCL",       "#a78bfa"),
+        ("blue",            "Blue",      "#fbbf24"),
+        ("cripto",          "Cripto",    "#22d3ee"),
+    ]:
+        df = get_dolar_historic(casa)
+        if df.empty:
+            continue
+        df_f = df[df["fecha"] >= desde].copy()
+        if df_f.empty:
+            continue
+        series[label] = (df_f, color)
+
+    if not series:
+        st.info("No se pudieron cargar historicos de dolar.")
+        return
+
+    fig = go.Figure()
+    for label, (df_f, color) in series.items():
+        fig.add_trace(go.Scatter(
+            x=df_f["fecha"], y=df_f["venta"], mode="lines",
+            line=dict(color=color, width=1.8),
+            name=label,
+            hovertemplate=f"<b>{label}</b><br>%{{x|%d %b %Y}}<br>$ %{{y:,.2f}}<extra></extra>",
+        ))
+    style_fig(fig, height=340)
+    fig.update_layout(
+        yaxis=dict(title="ARS"),
+        legend=dict(orientation="h", y=-0.15),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Brecha MEP / Oficial historica
+    df_of = get_dolar_historic("oficial")
+    df_mep = get_dolar_historic("mep")
+    if not df_of.empty and not df_mep.empty:
+        # Unimos por fecha
+        of = df_of[["fecha", "venta"]].rename(columns={"venta": "oficial"})
+        mep = df_mep[["fecha", "venta"]].rename(columns={"venta": "mep"})
+        merged = pd.merge(of, mep, on="fecha", how="inner")
+        merged = merged[merged["fecha"] >= desde].copy()
+        merged["brecha_pct"] = (merged["mep"] / merged["oficial"] - 1) * 100
+        if not merged.empty:
+            st.markdown("**Brecha MEP / Oficial**")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=merged["fecha"], y=merged["brecha_pct"], mode="lines",
+                line=dict(color="#fb7185", width=1.8),
+                fill="tozeroy", fillcolor="rgba(251,113,133,0.10)",
+                name="Brecha",
+                hovertemplate="<b>%{x|%d %b %Y}</b><br>%{y:.2f}%<extra></extra>",
+            ))
+            fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+            style_fig(fig, height=260)
+            fig.update_layout(yaxis=dict(title="%"))
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def _bloque_riesgo_pais_historico():
+    """Linea de riesgo pais en el ultimo año."""
+    df = get_riesgo_pais_historic()
+    if df.empty:
+        return
+    desde = pd.Timestamp.today() - pd.DateOffset(years=1)
+    df_f = df[df["fecha"] >= desde].copy()
+    if df_f.empty:
+        return
+
+    st.markdown("**Riesgo pais (EMBI) — ultimos 12 meses**")
+    minimo = df_f["valor"].min()
+    maximo = df_f["valor"].max()
+    ultimo = df_f["valor"].iloc[-1]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_f["fecha"], y=df_f["valor"], mode="lines",
+        line=dict(color="#f59e0b", width=1.8),
+        fill="tozeroy", fillcolor="rgba(245,158,11,0.10)",
+        name="EMBI",
+        hovertemplate="<b>%{x|%d %b %Y}</b><br>%{y:.0f} pb<extra></extra>",
+    ))
+    # Lineas guia min/max
+    fig.add_hline(y=minimo, line_dash="dot", line_color="rgba(52,211,153,0.5)",
+                  annotation_text=f"min {minimo:.0f}", annotation_position="bottom right")
+    fig.add_hline(y=maximo, line_dash="dot", line_color="rgba(251,113,133,0.5)",
+                  annotation_text=f"max {maximo:.0f}", annotation_position="top right")
+    style_fig(fig, height=280)
+    fig.update_layout(yaxis=dict(title="puntos basicos"))
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Rango 12m: **{minimo:.0f} pb** (min) — **{maximo:.0f} pb** (max). "
+        f"Ultimo: **{ultimo:.0f} pb**."
+    )
 
 
 # -----------------------------------------------------------------------------

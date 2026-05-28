@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 
 from core.db import get_session, Tenencia
-from core.data import get_last_price, get_history, get_dolares, get_info
+from core.data import get_last_price, get_history, get_dolares, get_info, get_dolar_historic
 
 
 # -----------------------------------------------------------------------------
@@ -317,3 +317,108 @@ def equity_curve(df: pd.DataFrame, period: str = "6mo") -> pd.Series:
         return pd.Series(dtype=float)
     total.index = pd.to_datetime(total.index).tz_localize(None)
     return total.sort_index()
+
+
+# -----------------------------------------------------------------------------
+# BENCHMARKS NORMALIZADOS
+# -----------------------------------------------------------------------------
+def benchmark_curves(period: str = "6mo") -> pd.DataFrame:
+    """
+    Devuelve un DataFrame con curvas DIARIAS normalizadas a 100 al inicio para:
+      - Portfolio (usando equity_curve)
+      - Merval (^MERV en ARS)
+      - SPY en ARS (SPY USD * MEP histórico)
+      - USD MEP (buy & hold)
+      - Inflación CER (interpolación lineal del IPC mensual)
+
+    Índice = fechas comunes (intersección). Columnas faltantes quedan NaN.
+    """
+    from core.inflation import _serie_indexada
+    from datetime import date, timedelta
+
+    # 1) Portfolio
+    df_tenencias = load_tenencias()
+    if df_tenencias.empty:
+        return pd.DataFrame()
+    port_curve = equity_curve(df_tenencias, period=period)
+    if port_curve.empty:
+        return pd.DataFrame()
+
+    fecha_desde = port_curve.index[0]
+    fecha_hasta = port_curve.index[-1]
+
+    # 2) Merval
+    merv_hist = get_history("^MERV", period="1y")
+    merv = pd.Series(dtype=float)
+    if not merv_hist.empty:
+        merv_hist.index = pd.to_datetime(merv_hist.index).tz_localize(None)
+        merv = merv_hist.loc[
+            (merv_hist.index >= fecha_desde) & (merv_hist.index <= fecha_hasta),
+            "Close",
+        ]
+
+    # 3) SPY en ARS (precio SPY USD * MEP del día)
+    spy_hist = get_history("SPY", period="1y")
+    mep_df = get_dolar_historic("mep")
+    spy_ars = pd.Series(dtype=float)
+    if not spy_hist.empty and not mep_df.empty:
+        spy_hist.index = pd.to_datetime(spy_hist.index).tz_localize(None)
+        spy = spy_hist.loc[
+            (spy_hist.index >= fecha_desde) & (spy_hist.index <= fecha_hasta),
+            "Close",
+        ]
+        mep_filt = mep_df[(mep_df["fecha"] >= fecha_desde)
+                          & (mep_df["fecha"] <= fecha_hasta)].copy()
+        if not mep_filt.empty and not spy.empty:
+            mep_filt = mep_filt.set_index("fecha")["venta"]
+            # Reindex MEP a las mismas fechas que SPY, forward-fill para los gaps
+            mep_aligned = mep_filt.reindex(spy.index).ffill().bfill()
+            spy_ars = spy * mep_aligned
+
+    # 4) USD MEP buy & hold
+    usd_mep = pd.Series(dtype=float)
+    if not mep_df.empty:
+        mep_filt = mep_df[(mep_df["fecha"] >= fecha_desde)
+                          & (mep_df["fecha"] <= fecha_hasta)].copy()
+        if not mep_filt.empty:
+            usd_mep = mep_filt.set_index("fecha")["venta"]
+
+    # 5) Inflacion acumulada (mensual interpolada a diario)
+    inflacion = pd.Series(dtype=float)
+    try:
+        infl_serie = _serie_indexada()
+        if not infl_serie.empty:
+            # Cumulativo: cada mes vale (1 + ipc/100) acumulado desde el inicio
+            infl_filt = infl_serie[
+                (infl_serie["fecha"] >= fecha_desde - pd.Timedelta(days=31))
+                & (infl_serie["fecha"] <= fecha_hasta)
+            ].copy()
+            if not infl_filt.empty:
+                infl_filt = infl_filt.set_index("fecha")
+                infl_filt["factor"] = (infl_filt["valor"] / 100 + 1).cumprod()
+                # Index diario para interpolacion
+                full_idx = pd.date_range(start=fecha_desde, end=fecha_hasta, freq="D")
+                infl_daily = infl_filt["factor"].reindex(
+                    infl_filt.index.union(full_idx)).interpolate(method="time").reindex(full_idx).ffill().bfill()
+                # Re-normalizar a 1.0 al inicio
+                if not infl_daily.empty and infl_daily.iloc[0] > 0:
+                    inflacion = infl_daily / infl_daily.iloc[0]
+    except Exception:
+        pass
+
+    # 6) Armar DataFrame normalizado (base 100 al inicio de cada serie)
+    def _norm(s: pd.Series) -> pd.Series:
+        if s.empty or pd.isna(s.iloc[0]) or s.iloc[0] == 0:
+            return s
+        return s / s.iloc[0] * 100
+
+    out = pd.DataFrame({
+        "Portfolio":   _norm(port_curve),
+        "Merval":      _norm(merv),
+        "SPY (ARS)":   _norm(spy_ars),
+        "USD MEP":     _norm(usd_mep),
+        "Inflación":   inflacion * 100 if not inflacion.empty else inflacion,
+    })
+    # Indice unico (deduplicar fechas)
+    out = out.loc[~out.index.duplicated(keep="first")]
+    return out.sort_index()
