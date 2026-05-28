@@ -67,6 +67,49 @@ def inject_css():
         .tk-tipo{ color:var(--faint); font-size:.78rem; margin-left:.4rem; }
         .pnl-pos{ color:var(--pos); } .pnl-neg{ color:var(--neg); }
 
+        /* Grupos colapsables de posiciones */
+        details.pos-group{
+            background:linear-gradient(160deg, var(--surface2), var(--surface));
+            border:1px solid var(--border); border-radius:var(--radius);
+            margin:0 0 14px; overflow:hidden;
+        }
+        details.pos-group[open]{ border-color:rgba(52,211,153,0.25); }
+        details.pos-group summary{
+            cursor:pointer; list-style:none; padding:.9rem 1.1rem;
+            display:flex; align-items:center; justify-content:space-between;
+            transition:background .2s ease;
+        }
+        details.pos-group summary::-webkit-details-marker{ display:none; }
+        details.pos-group summary:hover{ background:rgba(255,255,255,0.02); }
+        .grp-left{ display:flex; align-items:center; gap:.6rem; }
+        .grp-right{ display:flex; align-items:center; gap:.7rem; font-variant-numeric:tabular-nums; }
+        .grp-chevron{
+            color:var(--dim); font-size:.8rem; transition:transform .2s ease;
+            display:inline-block; width:.9rem;
+        }
+        details.pos-group[open] .grp-chevron{ transform:rotate(90deg); color:var(--accent); }
+        .grp-icon{ font-size:1rem; }
+        .grp-label{ font-family:'Sora',sans-serif; font-weight:600; color:var(--text); font-size:.98rem; }
+        .grp-count{
+            background:rgba(255,255,255,0.06); color:var(--dim);
+            font-size:.72rem; font-weight:600; padding:.1rem .5rem; border-radius:999px;
+        }
+        .grp-total{ font-family:'Sora',sans-serif; font-weight:600; color:var(--text); }
+        .grp-delta{ font-size:.85rem; font-weight:600; padding:.15rem .55rem; border-radius:999px; }
+        .grp-delta.pnl-pos{ color:var(--pos); background:rgba(52,211,153,0.12); }
+        .grp-delta.pnl-neg{ color:var(--neg); background:rgba(251,113,133,0.12); }
+
+        details.pos-group .pos-table{
+            margin:0 0 .6rem; padding:0 .7rem; border-spacing:0 4px;
+        }
+        details.pos-group .pos-table thead th{
+            background:transparent; padding:.1rem .9rem; border:0;
+        }
+        details.pos-group .pos-table td{
+            background:rgba(255,255,255,0.02); border-top:1px solid rgba(255,255,255,0.04);
+            border-bottom:1px solid rgba(255,255,255,0.04);
+        }
+
         /* Limpiar header default de Streamlit */
         [data-testid="stHeader"]{ background:transparent; }
         #MainMenu, footer{ visibility:hidden; }

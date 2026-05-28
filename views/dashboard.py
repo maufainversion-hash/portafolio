@@ -86,30 +86,83 @@ def render():
 
     st.divider()
 
-    # Tabla de posiciones custom (HTML premium)
+    # Tabla de posiciones agrupada por tipo (HTML premium con <details>)
     st.markdown("**Posiciones**")
-    filas = ""
-    for _, r in df_val.iterrows():
-        pnl = r.get("pnl_ars")
-        pnl_p = r.get("pnl_pct")
-        cls = "pnl-pos" if (pd.notna(pnl) and pnl >= 0) else "pnl-neg"
-        filas += (
-            "<tr>"
-            f"<td><span class='tk-badge'>{r['ticker']}</span>"
-            f"<span class='tk-tipo'>{r['tipo']}</span></td>"
-            f"<td>{r['cantidad']:.4f}</td>"
-            f"<td>{fmt_money(r.get('precio_actual'))}</td>"
-            f"<td>{fmt_money(r.get('valor_actual_ars'))}</td>"
-            f"<td class='{cls}'>{fmt_money(pnl)}</td>"
-            f"<td class='{cls}'>{fmt_pct(pnl_p)}</td>"
-            "</tr>"
-        )
-    st.markdown(
-        "<table class='pos-table'><thead><tr>"
-        "<th>Activo</th><th>Cantidad</th><th>P. actual</th>"
-        "<th>Valor (ARS)</th><th>P&L (ARS)</th><th>P&L %</th>"
-        "</tr></thead><tbody>" + filas + "</tbody></table>",
-        unsafe_allow_html=True,
-    )
+    _render_posiciones_agrupadas(df_val)
 
     st.caption("Gestiona tus tenencias (alta/baja) desde el tab **Cartera**.")
+
+
+# Labels visibles e icono por tipo
+_TIPO_META = {
+    "accion_ar": ("Acciones AR",  "🇦🇷"),
+    "cedear":    ("Cedears",      "🌎"),
+    "accion_us": ("Acciones US",  "🇺🇸"),
+    "etf":       ("ETFs",         "📊"),
+    "bono":      ("Bonos",        "📜"),
+    "fci":       ("FCIs",         "🏦"),
+    "cripto":    ("Cripto",       "₿"),
+}
+# Orden de aparicion
+_TIPO_ORDER = ["accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto"]
+
+
+def _render_posiciones_agrupadas(df_val: pd.DataFrame):
+    """Tabla agrupada por tipo, cada grupo colapsable con sus sub-totales."""
+    bloques = []
+    for tipo in _TIPO_ORDER:
+        grupo = df_val[df_val["tipo"] == tipo]
+        if grupo.empty:
+            continue
+        label, icon = _TIPO_META.get(tipo, (tipo, "•"))
+
+        # Sub-totales del grupo (solo posiciones con valor valido)
+        g_valid = grupo[grupo["valor_actual_ars"].notna()]
+        sub_valor = g_valid["valor_actual_ars"].sum()
+        sub_costo = g_valid["costo_ars"].sum() if "costo_ars" in g_valid else 0
+        sub_pnl = sub_valor - sub_costo
+        sub_pct = (sub_pnl / sub_costo * 100) if sub_costo else 0
+        sub_cls = "pnl-pos" if sub_pnl >= 0 else "pnl-neg"
+
+        # Filas
+        filas = ""
+        for _, r in grupo.iterrows():
+            pnl = r.get("pnl_ars")
+            pnl_p = r.get("pnl_pct")
+            cls = "pnl-pos" if (pd.notna(pnl) and pnl >= 0) else "pnl-neg"
+            filas += (
+                "<tr>"
+                f"<td><span class='tk-badge'>{r['ticker']}</span></td>"
+                f"<td>{r['cantidad']:.4f}</td>"
+                f"<td>{fmt_money(r.get('precio_actual'))}</td>"
+                f"<td>{fmt_money(r.get('valor_actual_ars'))}</td>"
+                f"<td class='{cls}'>{fmt_money(pnl)}</td>"
+                f"<td class='{cls}'>{fmt_pct(pnl_p)}</td>"
+                "</tr>"
+            )
+
+        bloques.append(f"""
+        <details class="pos-group" open>
+          <summary>
+            <span class="grp-left">
+              <span class="grp-chevron">▸</span>
+              <span class="grp-icon">{icon}</span>
+              <span class="grp-label">{label}</span>
+              <span class="grp-count">{len(grupo)}</span>
+            </span>
+            <span class="grp-right">
+              <span class="grp-total">{fmt_money(sub_valor)}</span>
+              <span class="grp-delta {sub_cls}">{fmt_pct(sub_pct)}</span>
+            </span>
+          </summary>
+          <table class="pos-table">
+            <thead><tr>
+              <th>Activo</th><th>Cantidad</th><th>P. actual</th>
+              <th>Valor (ARS)</th><th>P&L (ARS)</th><th>P&L %</th>
+            </tr></thead>
+            <tbody>{filas}</tbody>
+          </table>
+        </details>
+        """)
+
+    st.markdown("".join(bloques), unsafe_allow_html=True)
