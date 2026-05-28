@@ -8,7 +8,7 @@ from streamlit_option_menu import option_menu
 
 from core.db import (
     init_db, list_portfolios, create_portfolio, rename_portfolio,
-    delete_portfolio, db_backend,
+    delete_portfolio, db_backend, get_ifa_profile, update_ifa_profile,
 )
 from core.active_portfolio import (
     get_active_portfolio_id, set_active_portfolio, get_active_portfolio_info,
@@ -153,6 +153,46 @@ with col_pf:
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
+
+            # Perfil del IFA (aparece en los PDFs)
+            st.divider()
+            ifa = get_ifa_profile()
+            st.markdown("**Mi perfil de IFA / Asesor**")
+            st.caption("Estos datos aparecen en cada PDF de research que generes.")
+            with st.form("ifa_profile"):
+                ifa_nombre    = st.text_input("Nombre completo",
+                                              value=ifa.get("nombre", ""),
+                                              placeholder="Mauricio Ferreyra")
+                ifa_matricula = st.text_input("Matricula / CNV / etc",
+                                              value=ifa.get("matricula", ""),
+                                              placeholder="CNV-12345")
+                ifa_empresa   = st.text_input("Empresa / Broker",
+                                              value=ifa.get("empresa", ""),
+                                              placeholder="Balanz Capital")
+                ifa_email     = st.text_input("Email",
+                                              value=ifa.get("email", ""),
+                                              placeholder="mauri@example.com")
+                ifa_telefono  = st.text_input("Telefono / WhatsApp",
+                                              value=ifa.get("telefono", ""),
+                                              placeholder="+54 9 11 1234-5678")
+                ifa_logo      = st.text_input("URL del logo (opcional)",
+                                              value=ifa.get("logo_url", ""),
+                                              placeholder="https://...png/jpg")
+                ifa_disc      = st.text_area("Disclaimer extra (opcional)",
+                                             value=ifa.get("disclaimer", ""),
+                                             height=70,
+                                             placeholder="Texto legal extra al footer del PDF")
+                if st.form_submit_button("Guardar perfil",
+                                         type="primary",
+                                         use_container_width=True):
+                    update_ifa_profile(
+                        nombre=ifa_nombre, matricula=ifa_matricula,
+                        empresa=ifa_empresa, email=ifa_email,
+                        telefono=ifa_telefono, logo_url=ifa_logo,
+                        disclaimer=ifa_disc,
+                    )
+                    st.success("Perfil guardado.")
+                    st.rerun()
 
 with col_ccy:
     st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)

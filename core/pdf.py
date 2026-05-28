@@ -37,14 +37,18 @@ HAS_DEJAVU = os.path.exists(DEJAVU_REG) and os.path.exists(DEJAVU_BLD)
 
 
 class InstitutionalPDF(FPDF):
-    """PDF con header / footer estilo banking."""
+    """PDF con header / footer estilo banking + branding del IFA."""
 
     def __init__(self, titulo: str = "Informe de Cartera",
-                 fecha_label: str = ""):
+                 fecha_label: str = "",
+                 ifa_profile: Optional[dict] = None,
+                 logo_bytes: Optional[bytes] = None):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.titulo = titulo
         self.fecha_label = fecha_label
-        self.set_auto_page_break(auto=True, margin=20)
+        self.ifa = ifa_profile or {}
+        self.logo_bytes = logo_bytes  # PNG/JPG ya descargado (o None)
+        self.set_auto_page_break(auto=True, margin=22)
         self.set_margins(20, 30, 20)
         # Cargar DejaVu si esta disponible (soporta Unicode)
         if HAS_DEJAVU:
@@ -60,8 +64,17 @@ class InstitutionalPDF(FPDF):
         # Banda azul oscura compacta
         self.set_fill_color(*COLOR_HEADER_BG)
         self.rect(0, 0, 210, 18, "F")
-        # Titulo a la izquierda
-        self.set_xy(15, 5)
+        # Logo del IFA a la izquierda si esta
+        x_text = 15
+        if self.logo_bytes:
+            try:
+                buf = io.BytesIO(self.logo_bytes)
+                self.image(buf, x=15, y=3, h=12)
+                x_text = 30
+            except Exception:
+                pass
+        # Titulo
+        self.set_xy(x_text, 5)
         self.set_text_color(*COLOR_HEADER_TXT)
         self.set_font(self._font, "B", 12)
         self.cell(120, 6, _safe(self.titulo.upper()))
@@ -74,23 +87,51 @@ class InstitutionalPDF(FPDF):
         self.set_y(22)
 
     def footer(self):
-        self.set_y(-18)
+        # Linea separadora
+        self.set_y(-22)
         self.set_draw_color(*COLOR_FAINT)
         self.set_line_width(0.2)
         self.line(20, self.get_y(), 190, self.get_y())
-        self.set_y(-13)
+
+        # Datos del IFA (si estan configurados)
+        ifa_line = self._ifa_footer_line()
+        if ifa_line:
+            self.set_y(-19)
+            self.set_text_color(*COLOR_ACCENT)
+            self.set_font(self._font, "B", 8)
+            self.cell(0, 3.5, _safe(ifa_line), align="C")
+
+        # Disclaimer (default o el del IFA si lo configuro)
+        self.set_y(-15)
         self.set_text_color(*COLOR_DIM)
-        self.set_font(self._font, "I", 7.5)
-        self.multi_cell(0, 3.5, _safe(
-            "Este informe tiene caracter informativo y educativo. No constituye "
-            "asesoramiento financiero ni recomendacion de compra/venta. Las "
-            "inversiones en mercados de capitales conllevan riesgos."), align="C")
+        self.set_font(self._font, "I", 7)
+        disclaimer = self.ifa.get("disclaimer") or (
+            "Este informe tiene caracter informativo y educativo. No "
+            "constituye asesoramiento financiero ni recomendacion de "
+            "compra/venta. Las inversiones en mercados de capitales "
+            "conllevan riesgos."
+        )
+        self.multi_cell(0, 3, _safe(disclaimer), align="C")
+
+        # Numero de pagina
         self.set_y(-7)
         self.set_font(self._font, "", 7.5)
         self.set_text_color(*COLOR_DIM)
-        self.cell(0, 3.5,
-                  f"TuPortafolioIA  ·  pag {self.page_no()}",
-                  align="C")
+        self.cell(0, 3.5, f"pag {self.page_no()}", align="C")
+
+    def _ifa_footer_line(self) -> str:
+        """Compone la linea de contacto del IFA en el footer."""
+        if not self.ifa:
+            return ""
+        parts = []
+        nombre = self.ifa.get("nombre")
+        if nombre:
+            parts.append(nombre)
+        for key in ("matricula", "empresa", "email", "telefono"):
+            v = self.ifa.get(key)
+            if v:
+                parts.append(v)
+        return "  ·  ".join(parts)
 
 
 # ===================== HELPERS =====================
@@ -488,12 +529,12 @@ def markdown_to_pdf(md_text: str, titulo: str = "Informe de Cartera",
     """
     Construye el PDF estilo banking.
 
-    - Header con titulo + fecha en banda azul oscura.
+    - Header con titulo + fecha en banda azul oscura, logo del IFA si esta.
     - 3 KPIs grandes con barra coloreada (valor, rendimiento, rendimiento real).
     - Seccion 1: evolucion de la cartera (tabla concepto/monto estilo banking).
     - Seccion 2: composicion y evolucion (charts PNG).
     - Seccion 3+: analisis del LLM (markdown renderizado).
-    - Footer en cada pagina con disclaimer + numero de pagina.
+    - Footer en cada pagina con datos del IFA + disclaimer + pagina.
     """
     pf_meta = (context or {}).get("portfolio_meta") or {}
     cliente = pf_meta.get("cliente") or pf_meta.get("nombre") or ""
@@ -502,7 +543,28 @@ def markdown_to_pdf(md_text: str, titulo: str = "Informe de Cartera",
     if cliente:
         fecha_label = f"Cliente: {cliente}  ·  {fecha_label}"
 
-    pdf = InstitutionalPDF(titulo="Informe de Cartera", fecha_label=fecha_label)
+    # Branding del IFA
+    try:
+        from core.db import get_ifa_profile
+        ifa = get_ifa_profile()
+    except Exception:
+        ifa = {}
+
+    logo_bytes = None
+    logo_url = (ifa or {}).get("logo_url")
+    if logo_url:
+        try:
+            import requests as _rq
+            r = _rq.get(logo_url, timeout=6)
+            if r.status_code == 200:
+                logo_bytes = r.content
+        except Exception:
+            pass
+
+    pdf = InstitutionalPDF(
+        titulo="Informe de Cartera", fecha_label=fecha_label,
+        ifa_profile=ifa, logo_bytes=logo_bytes,
+    )
     pdf.add_page()
 
     # 1. KPIs header

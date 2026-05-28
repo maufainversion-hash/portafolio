@@ -114,6 +114,20 @@ class Transaccion(Base):
     creado = Column(DateTime, default=datetime.utcnow)
 
 
+class IFAProfile(Base):
+    """Singleton (id=1): datos del asesor que aparecen en cada PDF/reporte."""
+    __tablename__ = "ifa_profile"
+    id          = Column(Integer, primary_key=True)
+    nombre      = Column(String(128), nullable=True)
+    matricula   = Column(String(64), nullable=True)
+    email       = Column(String(128), nullable=True)
+    telefono    = Column(String(64), nullable=True)
+    empresa     = Column(String(128), nullable=True)
+    logo_url    = Column(String(512), nullable=True)
+    disclaimer  = Column(String(1024), nullable=True)
+    actualizado = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # MIGRACION NO DESTRUCTIVA
 # ---------------------------------------------------------------------------
@@ -235,3 +249,36 @@ def delete_portfolio(pid: int) -> None:
 
 def get_session() -> Session:
     return SessionLocal()
+
+
+# ---------------------------------------------------------------------------
+# IFA PROFILE (singleton id=1)
+# ---------------------------------------------------------------------------
+def get_ifa_profile() -> dict:
+    """Devuelve el perfil del IFA. Si no existe, devuelve dict vacio."""
+    with SessionLocal() as s:
+        p = s.get(IFAProfile, 1)
+        if not p:
+            return {}
+        return {
+            "nombre":     p.nombre or "",
+            "matricula":  p.matricula or "",
+            "email":      p.email or "",
+            "telefono":   p.telefono or "",
+            "empresa":    p.empresa or "",
+            "logo_url":   p.logo_url or "",
+            "disclaimer": p.disclaimer or "",
+        }
+
+
+def update_ifa_profile(**fields) -> None:
+    """Upsert del perfil singleton (id=1)."""
+    with SessionLocal() as s:
+        p = s.get(IFAProfile, 1)
+        if not p:
+            p = IFAProfile(id=1)
+            s.add(p)
+        for k, v in fields.items():
+            if hasattr(p, k):
+                setattr(p, k, v.strip() if isinstance(v, str) else v)
+        s.commit()
