@@ -109,25 +109,32 @@ def _generar(kind: str, modelo: str):
     placeholder = st.empty()
     buffer = ""
 
-    def _stream():
-        nonlocal buffer
-        for chunk in generate_report_stream(ctx, kind=kind, model=modelo):
-            buffer += chunk
-            placeholder.markdown(buffer + " ▌")
-            yield chunk
-
-    # Consumimos el stream
-    for _ in _stream():
-        pass
+    for chunk in generate_report_stream(ctx, kind=kind, model=modelo):
+        buffer += chunk
+        placeholder.markdown(buffer + " ▌")
 
     placeholder.markdown(buffer)
 
-    # Persistimos
+    # Heuristica: si el output empieza con "**Error" o tiene menos de 200 chars
+    # probablemente es un mensaje de error, no un reporte real.
+    es_error = (
+        buffer.lstrip().startswith("**")
+        and ("error" in buffer.lower()[:120] or
+             "cuota" in buffer.lower()[:200] or
+             "saturad" in buffer.lower()[:200])
+    ) or len(buffer.strip()) < 200
+
+    if es_error:
+        # No persistimos errores, no mostramos boton de descarga
+        st.info("Cuando el modelo responda, vas a ver el reporte aca y el botón "
+                "de descarga. Intentá de nuevo o cambiá de modelo.")
+        return
+
+    # Persistimos solo reportes validos
     st.session_state["ai_last_report"] = buffer
     st.session_state["ai_last_kind_label"] = KINDS[kind]["label"]
     st.session_state["ai_last_modelo"] = modelo
 
-    # Boton descargar
     st.download_button(
         "⬇ Descargar reporte (Markdown)",
         data=buffer,

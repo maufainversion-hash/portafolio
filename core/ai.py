@@ -22,9 +22,12 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 
 # Modelos disponibles (label -> id)
 MODELOS = {
-    "Gemini 2.5 Flash (rapido)":  "gemini-2.5-flash",
-    "Gemini 2.5 Pro (profundo)":  "gemini-2.5-pro",
+    "Gemini 2.5 Flash (rapido, free tier OK)":  "gemini-2.5-flash",
+    "Gemini 2.5 Pro (profundo, requiere pago)": "gemini-2.5-pro",
 }
+
+# Modelo de fallback si el principal falla por cuota
+FALLBACK_MODEL = "gemini-2.5-flash"
 
 
 SYSTEM_PROMPT = """Eres un Senior Portfolio Manager con experiencia combinada de:
@@ -213,13 +216,60 @@ def _build_user_prompt(context: dict, kind: str) -> str:
 """
 
 
+def _friendly_error(err: Exception, model: str) -> tuple[str, bool]:
+    """
+    Traduce un error de Gemini a un mensaje amigable + flag de "es transient"
+    (True si vale la pena reintentar).
+    """
+    msg = str(err)
+    # 503 - servicio saturado (transient)
+    if "503" in msg or "UNAVAILABLE" in msg.upper():
+        return (
+            "El modelo está saturado momentáneamente (demanda alta del lado de Google). "
+            "Estamos reintentando automáticamente...",
+            True,
+        )
+    # 429 - cuota agotada
+    if "429" in msg or "RESOURCE_EXHAUSTED" in msg.upper():
+        # Distinguir: limit 0 (modelo no incluido en el free tier) vs limit > 0 (espera)
+        if "limit: 0" in msg or "FreeTier" in msg and "Pro" in model:
+            return (
+                f"**Cuota agotada para `{model}`.** El **free tier de Google no "
+                f"incluye Gemini 2.5 Pro** — solo Flash. Opciones:\n\n"
+                f"- Cambiá el modelo a **Gemini 2.5 Flash** en el selector "
+                f"de arriba (sí está incluido en el free tier).\n"
+                f"- O activá billing en [aistudio.google.com]"
+                f"(https://aistudio.google.com/apikey) para habilitar Pro.",
+                False,
+            )
+        # Quota por minuto/dia
+        return (
+            f"Cuota del free tier agotada (por minuto o por día). Esperá "
+            f"unos minutos antes de reintentar, o cambiá a un modelo con "
+            f"menos demanda. Detalle técnico: `{msg[:200]}...`",
+            False,
+        )
+    # 401/403 - auth
+    if any(x in msg for x in ["401", "403", "API key not valid", "PERMISSION_DENIED"]):
+        return (
+            "La API key no es válida o no tiene permisos sobre Gemini. "
+            "Verificá que copiaste bien la key en `secrets.toml` y que "
+            "tenga habilitado el acceso a la Gemini API.",
+            False,
+        )
+    return (f"Error inesperado: `{msg[:300]}`", False)
+
+
 def generate_report_stream(context: dict, kind: str = "completo",
                            model: str = DEFAULT_MODEL) -> Iterator[str]:
     """
     Genera un reporte usando Gemini en modo streaming.
-    Yieldea chunks de texto a medida que llegan.
-    Si no hay API key configurada, yieldea un mensaje de error y termina.
+    - Yieldea chunks de texto a medida que llegan.
+    - Reintenta automáticamente hasta 2 veces ante errores 503 (servicio saturado).
+    - Traduce errores 429/503/401 a mensajes amigables.
     """
+    import time
+
     api_key = get_api_key()
     if not api_key:
         yield ("**Falta configurar la API key de Gemini.** Pega tu key en el "
@@ -234,22 +284,40 @@ def generate_report_stream(context: dict, kind: str = "completo",
         yield "**Falta instalar `google-genai`.** Corre `pip install google-genai`."
         return
 
-    try:
-        client = genai.Client(api_key=api_key)
-        user_prompt = _build_user_prompt(context, kind)
+    client = genai.Client(api_key=api_key)
+    user_prompt = _build_user_prompt(context, kind)
+    config = gtypes.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.4,
+        max_output_tokens=8192,
+    )
 
-        response = client.models.generate_content_stream(
-            model=model,
-            contents=user_prompt,
-            config=gtypes.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.4,
-                max_output_tokens=8192,
-            ),
-        )
-        for chunk in response:
-            text = getattr(chunk, "text", None)
-            if text:
-                yield text
-    except Exception as e:
-        yield f"\n\n**Error al generar el reporte:** `{e}`"
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        any_chunk_received = False
+        try:
+            response = client.models.generate_content_stream(
+                model=model,
+                contents=user_prompt,
+                config=config,
+            )
+            for chunk in response:
+                text = getattr(chunk, "text", None)
+                if text:
+                    any_chunk_received = True
+                    yield text
+            # Si llegamos hasta acá sin excepción, la generación terminó OK
+            return
+        except Exception as e:
+            friendly, transient = _friendly_error(e, model)
+            if any_chunk_received:
+                # Falló en el medio, no podemos reintentar limpio
+                yield f"\n\n**Error en medio de la generación:** {friendly}"
+                return
+            if transient and attempt < max_retries:
+                wait = 2 * attempt  # 2s, 4s
+                yield f"\n_{friendly} (intento {attempt}/{max_retries}, esperando {wait}s)_\n\n"
+                time.sleep(wait)
+                continue
+            yield f"\n\n{friendly}"
+            return
