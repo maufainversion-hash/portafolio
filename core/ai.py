@@ -30,6 +30,51 @@ MODELOS = {
 FALLBACK_MODEL = "gemini-2.5-flash"
 
 
+# Niveles de complejidad/lenguaje del reporte
+NIVELES = {
+    "principiante": {
+        "label": "Cliente principiante",
+        "description": "Lenguaje simple, todo explicado, sin jerga financiera",
+        "instruccion": (
+            "El destinatario es un CLIENTE PRINCIPIANTE que recien empieza a "
+            "invertir. Usa lenguaje CLARO Y SIMPLE. Explica cada termino "
+            "tecnico la primera vez que lo uses, en una sola frase, entre "
+            "parentesis. Evita Sharpe, Sortino, VaR, kurtosis, skew, HHI, etc. "
+            "(usa 'volatilidad' como 'cuanto se mueve el precio', 'drawdown' "
+            "como 'caida desde el maximo', etc). Privilegia comparaciones "
+            "intuitivas: 'esta cartera rindio como un plazo fijo' o "
+            "'rindio menos que la inflacion, asi que tu plata compra menos "
+            "hoy que antes'. Frases cortas. Negritas para resaltar los numeros "
+            "clave."
+        ),
+    },
+    "intermedio": {
+        "label": "Cliente intermedio",
+        "description": "Lenguaje claro, con algo de jerga explicada brevemente",
+        "instruccion": (
+            "El destinatario es un CLIENTE CON CONOCIMIENTOS BASICOS de "
+            "inversion. Puede usar terminos como Sharpe, drawdown o "
+            "diversificacion sin que asusten, pero la primera vez que aparezcan "
+            "ofrece una mini-aclaracion entre parentesis (ej: 'Sharpe (retorno "
+            "ajustado por riesgo)'). Mantene un tono profesional pero accesible. "
+            "Las metricas tecnicas se mencionan pero no son el foco; el foco es "
+            "el 'que paso' y el 'que significa para el cliente'."
+        ),
+    },
+    "avanzado": {
+        "label": "Asesor / Cliente avanzado",
+        "description": "Lenguaje institucional pleno (Bloomberg / Morningstar)",
+        "instruccion": (
+            "El destinatario es un ASESOR FINANCIERO o un CLIENTE SOFISTICADO. "
+            "Usa lenguaje institucional pleno, jerga tecnica sin necesidad de "
+            "explicar (Sharpe, Sortino, MaxDD, VaR, kurtosis, skew, HHI, "
+            "factor exposure, etc). Privilegia la profundidad analitica sobre "
+            "la simplicidad."
+        ),
+    },
+}
+
+
 SYSTEM_PROMPT = """Eres un Senior Portfolio Manager con experiencia combinada de:
 - Equity Research Analyst (cobertura institucional)
 - Quantitative Analyst (factor models, risk attribution)
@@ -181,14 +226,19 @@ def has_api_key() -> bool:
 # -----------------------------------------------------------------------------
 # GENERACION
 # -----------------------------------------------------------------------------
-def _build_user_prompt(context: dict, kind: str) -> str:
+def _build_user_prompt(context: dict, kind: str, nivel: str = "intermedio") -> str:
     """Arma el USER prompt con la estructura solicitada y el context JSON."""
     kind_info = KINDS.get(kind, KINDS["completo"])
+    nivel_info = NIVELES.get(nivel, NIVELES["intermedio"])
     sections_md = "\n".join(f"- {s}" for s in kind_info["sections"])
 
     context_json = json.dumps(context, ensure_ascii=False, indent=2, default=str)
 
     return f"""Genera un **{kind_info['label']}** sobre el siguiente portafolio.
+
+## Nivel de complejidad del lenguaje
+
+{nivel_info['instruccion']}
 
 ## Secciones obligatorias (en este orden)
 
@@ -261,7 +311,8 @@ def _friendly_error(err: Exception, model: str) -> tuple[str, bool]:
 
 
 def generate_report_stream(context: dict, kind: str = "completo",
-                           model: str = DEFAULT_MODEL) -> Iterator[str]:
+                           model: str = DEFAULT_MODEL,
+                           nivel: str = "intermedio") -> Iterator[str]:
     """
     Genera un reporte usando Gemini en modo streaming.
     - Yieldea chunks de texto a medida que llegan.
@@ -285,7 +336,7 @@ def generate_report_stream(context: dict, kind: str = "completo",
         return
 
     client = genai.Client(api_key=api_key)
-    user_prompt = _build_user_prompt(context, kind)
+    user_prompt = _build_user_prompt(context, kind, nivel)
     config = gtypes.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         temperature=0.4,

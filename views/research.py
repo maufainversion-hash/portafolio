@@ -11,7 +11,7 @@ Flow:
 import streamlit as st
 
 from core.ai import (
-    KINDS, MODELOS, DEFAULT_MODEL,
+    KINDS, MODELOS, DEFAULT_MODEL, NIVELES,
     has_api_key, generate_report_stream,
 )
 from core.ai_data import build_portfolio_context
@@ -38,7 +38,7 @@ def render():
         return
 
     # Selectores
-    c1, c2, c3 = st.columns([2, 2, 1])
+    c1, c2 = st.columns(2)
     with c1:
         kind_label = st.selectbox(
             "Tipo de reporte",
@@ -47,20 +47,29 @@ def render():
             key="ai_kind",
         )
     with c2:
+        nivel_label = st.selectbox(
+            "Nivel de complejidad del lenguaje",
+            options=list(NIVELES.keys()),
+            format_func=lambda n: f"{NIVELES[n]['label']} — {NIVELES[n]['description']}",
+            index=1,  # intermedio por default
+            key="ai_nivel",
+        )
+    c3, c4 = st.columns([2, 1])
+    with c3:
         modelo_label = st.selectbox(
             "Modelo Gemini",
             options=list(MODELOS.keys()),
             key="ai_modelo",
         )
         modelo = MODELOS[modelo_label]
-    with c3:
+    with c4:
         st.markdown("<div style='height:1.75rem;'></div>", unsafe_allow_html=True)
         generar = st.button("Generar reporte", type="primary",
                             use_container_width=True)
 
     # Render del ultimo reporte (si hay)
     if generar:
-        _generar(kind_label, modelo)
+        _generar(kind_label, modelo, nivel_label)
     elif "ai_last_report" in st.session_state:
         st.divider()
         st.caption(
@@ -98,7 +107,7 @@ def _bloque_api_key():
             st.success("✔ API key configurada para esta sesion.")
 
 
-def _generar(kind: str, modelo: str):
+def _generar(kind: str, modelo: str, nivel: str = "intermedio"):
     """Construye el contexto, llama a Gemini en stream y guarda el resultado."""
     with st.spinner("Construyendo contexto del portafolio..."):
         ctx = build_portfolio_context()
@@ -109,13 +118,16 @@ def _generar(kind: str, modelo: str):
         return
 
     st.divider()
-    st.caption(f"Generando **{KINDS[kind]['label']}** con `{modelo}` ...")
+    st.caption(
+        f"Generando **{KINDS[kind]['label']}** ({NIVELES[nivel]['label']}) "
+        f"con `{modelo}` ..."
+    )
 
     # Streaming en vivo
     placeholder = st.empty()
     buffer = ""
 
-    for chunk in generate_report_stream(ctx, kind=kind, model=modelo):
+    for chunk in generate_report_stream(ctx, kind=kind, model=modelo, nivel=nivel):
         buffer += chunk
         placeholder.markdown(buffer + " ▌")
 
@@ -140,7 +152,8 @@ def _generar(kind: str, modelo: str):
     st.session_state["ai_last_report"] = buffer
     st.session_state["ai_last_kind_label"] = KINDS[kind]["label"]
     st.session_state["ai_last_kind_key"]   = kind
-    st.session_state["ai_last_modelo"] = modelo
+    st.session_state["ai_last_modelo"]     = modelo
+    st.session_state["ai_last_nivel"]      = nivel
 
     _download_buttons(buffer, KINDS[kind]["label"], kind)
 
@@ -166,6 +179,7 @@ def _download_buttons(md_text: str, titulo: str, kind: str):
                     md_text, titulo=titulo,
                     context=ctx, charts=charts,
                     cliente_friendly=True,
+                    nivel=st.session_state.get("ai_last_nivel", "intermedio"),
                 )
             st.download_button(
                 "⬇ Descargar reporte (PDF)",

@@ -1,76 +1,387 @@
 """
-Conversion de Markdown -> PDF institucional con fpdf2 (puro Python, sin
-dependencias del sistema -> funciona en Streamlit Cloud sin friccion).
+Generador de PDF institucional estilo banking (cabecera azul oscura, KPIs en
+barras, tablas con header oscuro, etc).
 
-Soporta:
-- # / ## / ### / #### headings (con colores y tamaño escalonado)
-- **bold** e *italic* inline
-- `code` inline
-- Listas con "- " o "* "
-- Tablas markdown (| col | col |)
-- Lineas horizontales (---)
-- Parrafos
-- Caracteres Unicode (acentos, eñes, simbolos $) via fuente DejaVu integrada
+Inspirado en informes de cartera de Balanz / IOL / PPI. Usa fpdf2 con DejaVu
+para soporte Unicode (✓, →, ±, …) y matplotlib charts ya generados como PNG.
 """
 from __future__ import annotations
 import io
+import os
 import re
 from datetime import datetime
+from typing import Optional
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 
-# Paleta institucional (los colores del branding de la app)
-COLOR_ACCENT = (52, 211, 153)    # verde esmeralda
-COLOR_DARK   = (13, 18, 30)      # casi negro
-COLOR_TEXT   = (35, 41, 56)      # gris oscuro para body
-COLOR_DIM    = (107, 114, 128)   # gris claro para captions
-COLOR_BG_TH  = (13, 58, 46)      # verde oscuro para headers de tabla
-COLOR_CODE   = (243, 244, 246)   # gris muy claro de fondo para `code`
+# ===================== PALETA "BANKING" =====================
+COLOR_HEADER_BG  = (15, 36, 64)      # azul oscuro casi negro
+COLOR_HEADER_TXT = (255, 255, 255)   # blanco
+COLOR_ACCENT     = (37, 99, 235)     # azul fuerte (referencia tipo CTA banking)
+COLOR_GREEN      = (16, 185, 129)    # verde institucional
+COLOR_RED        = (220, 38, 38)     # rojo institucional
+COLOR_DARK       = (15, 23, 42)      # azul-grafito para body
+COLOR_TEXT       = (30, 41, 59)
+COLOR_DIM        = (107, 114, 128)
+COLOR_FAINT      = (148, 163, 184)
+COLOR_BG_ROW     = (248, 250, 252)
+COLOR_BG_TOTAL   = (235, 244, 255)   # azul muy claro para fila TOTAL
+
+# Tipografía Unicode (DejaVu, disponible en Ubuntu/Streamlit Cloud).
+# Solo necesitamos Regular y Bold (italic se emula con Regular si falta).
+DEJAVU_DIR = "/usr/share/fonts/truetype/dejavu"
+DEJAVU_REG = os.path.join(DEJAVU_DIR, "DejaVuSans.ttf")
+DEJAVU_BLD = os.path.join(DEJAVU_DIR, "DejaVuSans-Bold.ttf")
+HAS_DEJAVU = os.path.exists(DEJAVU_REG) and os.path.exists(DEJAVU_BLD)
 
 
 class InstitutionalPDF(FPDF):
-    """PDF con header / footer institucional."""
+    """PDF con header / footer estilo banking."""
 
-    def __init__(self, titulo: str = "Reporte de Portafolio"):
+    def __init__(self, titulo: str = "Informe de Cartera",
+                 fecha_label: str = ""):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.titulo = titulo
+        self.fecha_label = fecha_label
         self.set_auto_page_break(auto=True, margin=20)
-        self.set_margins(20, 25, 20)
-        # DejaVu viene con fpdf2 y soporta Unicode completo
-        self.add_font("DejaVu", "", "DejaVu", uni=True) if False else None
-        # fpdf2 ya trae helvetica que soporta latin1; suficiente para nuestro caso
+        self.set_margins(20, 30, 20)
+        # Cargar DejaVu si esta disponible (soporta Unicode)
+        if HAS_DEJAVU:
+            self.add_font("DejaVu", "", DEJAVU_REG)
+            self.add_font("DejaVu", "B", DEJAVU_BLD)
+            # No hay Italic regular en DejaVu Sans; usamos la Bold como fallback I.
+            self.add_font("DejaVu", "I", DEJAVU_REG)
+            self._font = "DejaVu"
+        else:
+            self._font = "Helvetica"
 
     def header(self):
-        if self.page_no() == 1:
-            return  # la portada se renderiza aparte
-        # Banda superior fina
-        self.set_draw_color(*COLOR_ACCENT)
-        self.set_line_width(0.6)
-        self.line(20, 12, 190, 12)
-        # Titulo a la izquierda, pagina a la derecha
-        self.set_font("Helvetica", "B", 9)
-        self.set_text_color(*COLOR_DIM)
-        self.set_xy(20, 14)
-        self.cell(0, 5, "TuPortafolioIA · " + self.titulo)
-        self.set_xy(20, 14)
-        self.cell(170, 5, f"pag {self.page_no()}", align="R")
+        # Banda azul oscura compacta
+        self.set_fill_color(*COLOR_HEADER_BG)
+        self.rect(0, 0, 210, 18, "F")
+        # Titulo a la izquierda
+        self.set_xy(15, 5)
+        self.set_text_color(*COLOR_HEADER_TXT)
+        self.set_font(self._font, "B", 12)
+        self.cell(120, 6, _safe(self.titulo.upper()))
+        # Fecha / subtitulo a la derecha
+        self.set_xy(125, 7)
+        self.set_font(self._font, "", 9)
+        if self.fecha_label:
+            self.cell(70, 4, _safe(self.fecha_label), align="R")
+        # Espacio bajo banda
         self.set_y(22)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_font("Helvetica", "", 8)
-        self.set_text_color(*COLOR_DIM)
-        self.set_draw_color(*COLOR_DIM)
+        self.set_y(-18)
+        self.set_draw_color(*COLOR_FAINT)
         self.set_line_width(0.2)
         self.line(20, self.get_y(), 190, self.get_y())
-        self.set_y(-12)
-        self.cell(0, 5, "Reporte generado automaticamente · TuPortafolioIA", align="C")
+        self.set_y(-13)
+        self.set_text_color(*COLOR_DIM)
+        self.set_font(self._font, "I", 7.5)
+        self.multi_cell(0, 3.5, _safe(
+            "Este informe tiene caracter informativo y educativo. No constituye "
+            "asesoramiento financiero ni recomendacion de compra/venta. Las "
+            "inversiones en mercados de capitales conllevan riesgos."), align="C")
+        self.set_y(-7)
+        self.set_font(self._font, "", 7.5)
+        self.set_text_color(*COLOR_DIM)
+        self.cell(0, 3.5,
+                  f"TuPortafolioIA  ·  pag {self.page_no()}",
+                  align="C")
 
 
-# ---------------------------------------------------------------------------
-# PARSEO Y RENDER
-# ---------------------------------------------------------------------------
+# ===================== HELPERS =====================
+def _safe(text: str) -> str:
+    """Si no hay DejaVu, sanitizamos para latin1. Si hay, dejamos Unicode."""
+    if HAS_DEJAVU:
+        return text
+    replacements = {
+        "—": "-", "–": "-", "•": "-", "✓": "OK", "✗": "X",
+        "→": "->", "←": "<-", "▲": "^", "▼": "v",
+        "“": '"', "”": '"', "‘": "'", "’": "'",
+        "🇦🇷": "[AR]", "🇺🇸": "[US]", "🌎": "",
+        "📊": "", "📈": "", "📉": "", "💡": "", "🎯": "",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def _fmt_money(v) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"$ {float(v):,.0f}".replace(",", ".")
+    except Exception:
+        return str(v)
+
+
+def _fmt_pct(v, signed: bool = True) -> str:
+    if v is None:
+        return "—"
+    try:
+        fmt = "+.2f" if signed else ".2f"
+        return f"{float(v):{fmt}}%"
+    except Exception:
+        return str(v)
+
+
+# ===================== SECCIONES =====================
+def _emit_header_kpis(pdf: InstitutionalPDF, context: dict):
+    """3 KPIs grandes con barra coloreada arriba (estilo banking)."""
+    port = context.get("portfolio") or {}
+    metrics = context.get("metrics") or {}
+
+    valor = port.get("valor_total_ars")
+    pnl_pct = port.get("pnl_nominal_pct")
+    pnl_real_pct = port.get("pnl_real_pct")
+
+    kpis = [
+        ("Valor total", _fmt_money(valor), "en pesos arg.", COLOR_ACCENT),
+        ("Rendimiento", _fmt_pct(pnl_pct) if pnl_pct is not None else "—",
+         "nominal",
+         COLOR_GREEN if (pnl_pct is not None and pnl_pct >= 0) else COLOR_RED),
+        ("Rendimiento real", _fmt_pct(pnl_real_pct) if pnl_real_pct is not None else "—",
+         "vs inflacion (CER)",
+         COLOR_GREEN if (pnl_real_pct is not None and pnl_real_pct >= 0) else COLOR_RED),
+    ]
+
+    pdf.ln(2)
+    box_w = (pdf.w - pdf.l_margin - pdf.r_margin - 8) / 3  # 8 = gaps
+    box_h = 26
+    y0 = pdf.get_y()
+    for i, (label, valor_str, sub, color) in enumerate(kpis):
+        x = pdf.l_margin + i * (box_w + 4)
+        # Barra coloreada arriba (4mm de alto)
+        pdf.set_fill_color(*color)
+        pdf.rect(x, y0, box_w, 2.5, "F")
+        # Valor grande
+        pdf.set_xy(x, y0 + 5)
+        pdf.set_font(pdf._font, "B", 18)
+        pdf.set_text_color(*color)
+        pdf.cell(box_w, 9, _safe(valor_str), align="L")
+        # Label upper case
+        pdf.set_xy(x, y0 + 15)
+        pdf.set_font(pdf._font, "B", 8)
+        pdf.set_text_color(*COLOR_ACCENT)
+        pdf.cell(box_w, 4, _safe(label.upper()))
+        # Sub-label
+        pdf.set_xy(x, y0 + 20)
+        pdf.set_font(pdf._font, "I", 8)
+        pdf.set_text_color(*COLOR_DIM)
+        pdf.cell(box_w, 4, _safe(sub))
+    pdf.set_y(y0 + box_h)
+    # Linea divisoria
+    pdf.set_draw_color(*COLOR_FAINT); pdf.set_line_width(0.3)
+    pdf.line(20, pdf.get_y() + 2, 190, pdf.get_y() + 2)
+    pdf.ln(8)
+
+
+def _emit_section_title(pdf: InstitutionalPDF, num: str, titulo: str):
+    pdf.ln(4)
+    pdf.set_font(pdf._font, "B", 14)
+    pdf.set_text_color(*COLOR_ACCENT)
+    pdf.cell(0, 7, _safe(f"{num}. {titulo}"),
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(2)
+
+
+def _emit_resumen_table(pdf: InstitutionalPDF, context: dict):
+    """Tabla 'Evolucion de la cartera' tipo estado de cuenta."""
+    port = context.get("portfolio") or {}
+    metrics = context.get("metrics") or {}
+    benchmarks = context.get("benchmarks") or {}
+
+    valor_actual = port.get("valor_total_ars")
+    pnl_nominal = port.get("pnl_nominal_ars")
+    pnl_real    = port.get("pnl_real_ars")
+    inicio_eq   = metrics.get("valor_inicial_ars")
+    desde       = metrics.get("equity_curve_desde")
+    hasta       = metrics.get("equity_curve_hasta")
+
+    rows = []
+    if inicio_eq is not None and desde:
+        rows.append((f"Valor inicial al {desde}", _fmt_money(inicio_eq), None))
+    if metrics.get("retorno_periodo_pct") is not None:
+        rows.append(("Variacion de mercado (periodo)",
+                     _fmt_pct(metrics["retorno_periodo_pct"]),
+                     metrics["retorno_periodo_pct"]))
+    if pnl_nominal is not None:
+        rows.append(("Resultado por tenencia (nominal)",
+                     _fmt_money(pnl_nominal), pnl_nominal))
+    if pnl_real is not None:
+        rows.append(("Resultado real (descontando inflacion)",
+                     _fmt_money(pnl_real), pnl_real))
+    if valor_actual is not None and hasta:
+        rows.append((f"VALOR FINAL AL {hasta}",
+                     _fmt_money(valor_actual), None))
+
+    if not rows:
+        return
+
+    _render_kv_table(pdf, "Concepto", "Monto", rows, last_is_total=True)
+
+
+def _render_kv_table(pdf: InstitutionalPDF, h1: str, h2: str, rows: list,
+                     last_is_total: bool = False):
+    """Tabla key-value con header azul oscuro. rows = [(label, str_val, signed_val_or_None)]"""
+    page_w = pdf.w - pdf.l_margin - pdf.r_margin
+    col_w1 = page_w * 0.62
+    col_w2 = page_w * 0.38
+    # Header
+    pdf.set_font(pdf._font, "B", 9)
+    pdf.set_fill_color(*COLOR_HEADER_BG)
+    pdf.set_text_color(*COLOR_HEADER_TXT)
+    pdf.cell(col_w1, 7, _safe(h1), border=0, fill=True, align="L")
+    pdf.cell(col_w2, 7, _safe(h2), border=0, fill=True, align="R")
+    pdf.ln()
+    # Body
+    fill_row = False
+    n = len(rows)
+    for i, (label, val_str, signed) in enumerate(rows):
+        is_total = last_is_total and (i == n - 1)
+        if is_total:
+            pdf.set_fill_color(*COLOR_BG_TOTAL)
+            pdf.set_font(pdf._font, "B", 10)
+            pdf.set_text_color(*COLOR_ACCENT)
+        else:
+            pdf.set_fill_color(*COLOR_BG_ROW if fill_row else (255, 255, 255))
+            pdf.set_font(pdf._font, "", 9.5)
+            pdf.set_text_color(*COLOR_TEXT)
+        pdf.cell(col_w1, 6.5, _safe(label), border=0, fill=True, align="L")
+        # Color del valor
+        if signed is not None and not is_total:
+            try:
+                sv = float(signed)
+                if sv > 0:
+                    pdf.set_text_color(*COLOR_GREEN)
+                elif sv < 0:
+                    pdf.set_text_color(*COLOR_RED)
+            except Exception:
+                pass
+        pdf.cell(col_w2, 6.5, _safe(val_str), border=0, fill=True, align="R")
+        pdf.ln()
+        fill_row = not fill_row
+    # Linea inferior
+    pdf.set_draw_color(*COLOR_HEADER_BG); pdf.set_line_width(0.4)
+    y = pdf.get_y()
+    pdf.line(pdf.l_margin, y, pdf.l_margin + page_w, y)
+    pdf.ln(4)
+
+
+def _render_md_table(pdf: InstitutionalPDF, lines: list):
+    """Tabla markdown convertida al estilo banking."""
+    rows = []
+    for line in lines:
+        if TABLE_SEP_RE.match(line):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        rows.append(cells)
+    if not rows:
+        return
+    headers = rows[0]
+    body = rows[1:]
+    ncols = len(headers)
+    page_w = pdf.w - pdf.l_margin - pdf.r_margin
+    col_w = page_w / ncols
+
+    pdf.set_font(pdf._font, "B", 9)
+    pdf.set_fill_color(*COLOR_HEADER_BG)
+    pdf.set_text_color(*COLOR_HEADER_TXT)
+    for h in headers:
+        pdf.cell(col_w, 7, _safe(h), border=0, fill=True, align="L")
+    pdf.ln()
+
+    fill_row = False
+    for r in body:
+        pdf.set_fill_color(*COLOR_BG_ROW if fill_row else (255, 255, 255))
+        pdf.set_font(pdf._font, "", 9)
+        pdf.set_text_color(*COLOR_TEXT)
+        for cell in r:
+            txt = cell.replace("**", "")
+            # Detectar si la celda es un porcentaje o monto con signo
+            if re.match(r"^[+-][\d.,]+", txt):
+                if txt.startswith("+"):
+                    pdf.set_text_color(*COLOR_GREEN)
+                else:
+                    pdf.set_text_color(*COLOR_RED)
+                pdf.set_font(pdf._font, "B", 9)
+            else:
+                pdf.set_text_color(*COLOR_TEXT)
+                pdf.set_font(pdf._font, "", 9)
+            txt_safe = _safe(txt)
+            # Truncar si no entra
+            while pdf.get_string_width(txt_safe) > col_w - 2 and len(txt_safe) > 3:
+                txt_safe = txt_safe[:-1]
+            pdf.cell(col_w, 6, txt_safe, border=0, fill=True, align="L")
+        pdf.ln()
+        fill_row = not fill_row
+    pdf.ln(2)
+
+
+def _emit_charts(pdf: InstitutionalPDF, charts: dict):
+    """Sección 'Composición y evolución' con los charts PNG."""
+    if not charts:
+        return
+    _emit_section_title(pdf, "2", "Composicion y evolucion")
+    if charts.get("equity"):
+        pdf.set_font(pdf._font, "B", 10.5)
+        pdf.set_text_color(*COLOR_DARK)
+        pdf.cell(0, 5, _safe("Como evoluciono tu cartera"),
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font(pdf._font, "", 9)
+        pdf.set_text_color(*COLOR_DIM)
+        pdf.multi_cell(0, 4, _safe(
+            "Evolucion diaria del valor en pesos. Linea hacia arriba = ganancia."))
+        pdf.ln(1)
+        try:
+            buf = io.BytesIO(charts["equity"]); pdf.image(buf, x=pdf.l_margin, w=170)
+            pdf.ln(3)
+        except Exception:
+            pass
+
+    if charts.get("allocation"):
+        if pdf.get_y() > 200:
+            pdf.add_page()
+        pdf.set_font(pdf._font, "B", 10.5)
+        pdf.set_text_color(*COLOR_DARK)
+        pdf.cell(0, 5, _safe("Composicion por tipo de activo"),
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font(pdf._font, "", 9)
+        pdf.set_text_color(*COLOR_DIM)
+        pdf.multi_cell(0, 4, _safe(
+            "Distribucion del capital invertido por clase de activo."))
+        pdf.ln(1)
+        try:
+            buf = io.BytesIO(charts["allocation"]); pdf.image(buf, x=pdf.l_margin, w=170)
+            pdf.ln(3)
+        except Exception:
+            pass
+
+    if charts.get("benchmarks"):
+        if pdf.get_y() > 200:
+            pdf.add_page()
+        pdf.set_font(pdf._font, "B", 10.5)
+        pdf.set_text_color(*COLOR_DARK)
+        pdf.cell(0, 5, _safe("Comparacion con alternativas pasivas"),
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font(pdf._font, "", 9)
+        pdf.set_text_color(*COLOR_DIM)
+        pdf.multi_cell(0, 4, _safe(
+            "Tu portfolio (verde) vs Merval, S&P 500 en pesos, dolar MEP "
+            "buy & hold e inflacion (CER) en el mismo periodo."))
+        pdf.ln(1)
+        try:
+            buf = io.BytesIO(charts["benchmarks"]); pdf.image(buf, x=pdf.l_margin, w=170)
+            pdf.ln(3)
+        except Exception:
+            pass
+
+
+# ===================== PARSER MARKDOWN =====================
 HEADING_RE = re.compile(r"^(#{1,4})\s+(.+)$")
 HR_RE      = re.compile(r"^-{3,}$")
 BULLET_RE  = re.compile(r"^[\*\-]\s+(.+)$")
@@ -78,94 +389,10 @@ NUM_RE     = re.compile(r"^\d+\.\s+(.+)$")
 TABLE_SEP_RE = re.compile(r"^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$")
 
 
-def _emit_cover(pdf: InstitutionalPDF, titulo: str, context: dict = None):
-    """Pagina portada. Si hay context con cliente, lo agrega como subtitulo."""
-    pdf.add_page()
-    # Bloque decorativo arriba
-    pdf.set_fill_color(*COLOR_ACCENT)
-    pdf.rect(0, 0, 210, 8, "F")
-
-    # Logo / nombre app
-    pdf.set_xy(20, 60)
-    pdf.set_font("Helvetica", "B", 36)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.cell(0, 14, "TuPortafolioIA",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    pdf.set_x(20)
-    pdf.set_font("Helvetica", "", 13)
-    pdf.set_text_color(*COLOR_DIM)
-    pdf.cell(0, 8, "Terminal de portafolio · Research institucional",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    # Linea decorativa esmeralda
-    pdf.set_draw_color(*COLOR_ACCENT)
-    pdf.set_line_width(1.2)
-    pdf.line(20, 100, 60, 100)
-
-    # Cliente (si esta)
-    cliente = None
-    pf_nombre = None
-    if context:
-        meta = context.get("portfolio_meta") or {}
-        cliente = meta.get("cliente")
-        pf_nombre = meta.get("nombre")
-    if cliente:
-        pdf.set_xy(20, 110)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.cell(0, 6, "Reporte preparado para:",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_x(20)
-        pdf.set_font("Helvetica", "B", 18)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 8, _ascii_safe(cliente),
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        if pf_nombre and pf_nombre != cliente:
-            pdf.set_x(20)
-            pdf.set_font("Helvetica", "I", 10)
-            pdf.set_text_color(*COLOR_DIM)
-            pdf.cell(0, 5, _ascii_safe(f"Portfolio: {pf_nombre}"),
-                     new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    # Titulo del reporte
-    pdf.set_xy(20, 145 if cliente else 120)
-    pdf.set_font("Helvetica", "B", 22)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.multi_cell(0, 10, titulo)
-
-    # Fecha
-    pdf.set_xy(20, 250)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(*COLOR_DIM)
-    hoy = datetime.now().strftime("%d de %B de %Y")
-    # Castellanizar mes simple
-    meses_en = ["January","February","March","April","May","June","July",
-                "August","September","October","November","December"]
-    meses_es = ["enero","febrero","marzo","abril","mayo","junio","julio",
-                "agosto","septiembre","octubre","noviembre","diciembre"]
-    for en, es in zip(meses_en, meses_es):
-        hoy = hoy.replace(en, es)
-    pdf.cell(0, 5, "Fecha del reporte: " + hoy,
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    # Footer disclaimer cover
-    pdf.set_y(265)
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.multi_cell(0, 4,
-        "Este documento fue generado automaticamente con base en datos de mercado "
-        "y modelos de inteligencia artificial. No constituye recomendacion de "
-        "inversion. Sujeto a riesgo de mercado, cambiario e inflacionario.")
-
-
-def _strip_md_inline(text: str) -> list:
-    """
-    Convierte un string con **bold**, *italic* y `code` en una lista de
-    (texto, estilo) donde estilo es '', 'B', 'I' o 'C' (code).
-    """
-    out = []
+def _strip_md_inline(text: str):
     pattern = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)")
     parts = pattern.split(text)
+    out = []
     for p in parts:
         if not p:
             continue
@@ -180,560 +407,123 @@ def _strip_md_inline(text: str) -> list:
     return out
 
 
-def _ascii_safe(text: str) -> str:
-    """fpdf2 con fuentes Helvetica solo soporta latin1. Reemplaza chars unicode comunes."""
-    replacements = {
-        "—": "-", "–": "-", "•": "*",
-        "“": '"', "”": '"', "‘": "'", "’": "'",
-        "→": "->", "←": "<-", "▲": "^", "▼": "v",
-        "✔": "OK", "⚠": "!", "🎯": "", "📊": "",
-        "📈": "", "📉": "", "💡": "", "📋": "",
-        "🇦🇷": "[AR]", "🇺🇸": "[US]", "🌎": "[GLOBAL]",
-        "📜": "", "🏦": "", "₿": "BTC",
-        "▸": ">", "▾": "v", "↑": "^", "↓": "v",
-        "%": "%",
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    # Strip cualquier char que quede fuera de latin1
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-
-def _render_inline(pdf: InstitutionalPDF, fragments: list, size: int = 10):
-    """Renderea fragmentos inline en la linea actual."""
-    for txt, style in fragments:
-        txt_safe = _ascii_safe(txt)
-        if style == "C":
-            pdf.set_font("Courier", "", size)
-            pdf.set_fill_color(*COLOR_CODE)
-            pdf.set_text_color(*COLOR_DARK)
-            pdf.cell(pdf.get_string_width(txt_safe) + 2, 5, txt_safe, fill=True)
-        else:
-            pdf.set_font("Helvetica", style, size)
-            pdf.set_text_color(*COLOR_TEXT)
-            pdf.cell(pdf.get_string_width(txt_safe) + 0.5, 5, txt_safe)
-
-
 def _render_paragraph(pdf: InstitutionalPDF, text: str, size: int = 10):
-    """Para parrafos largos con inline formatting, usamos write() para wrap."""
     fragments = _strip_md_inline(text)
     pdf.set_text_color(*COLOR_TEXT)
     for txt, style in fragments:
-        txt_safe = _ascii_safe(txt)
         if style == "C":
-            pdf.set_font("Courier", "", size)
+            pdf.set_font(pdf._font, "", size - 0.5)
         else:
-            pdf.set_font("Helvetica", style, size)
-        pdf.write(5, txt_safe)
-    pdf.ln(6)
+            pdf.set_font(pdf._font, style, size)
+        pdf.write(5, _safe(txt))
+    pdf.ln(5.5)
 
 
-def _render_table(pdf: InstitutionalPDF, lines: list):
-    """
-    Renderea una tabla markdown. lines es la lista de filas markdown
-    (incluido el separador), ya filtradas.
-    """
-    rows = []
-    for line in lines:
-        if TABLE_SEP_RE.match(line):
-            continue
-        # Splitear por | quitando bordes
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        rows.append(cells)
-    if not rows:
-        return
-    headers = rows[0]
-    body = rows[1:]
-    ncols = len(headers)
-    if ncols == 0:
-        return
-
-    page_w = pdf.w - pdf.l_margin - pdf.r_margin
-    col_w = page_w / ncols
-
-    # Header
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.set_fill_color(*COLOR_BG_TH)
-    pdf.set_text_color(255, 255, 255)
-    for h in headers:
-        pdf.cell(col_w, 7, _ascii_safe(h), border=1, fill=True, align="L")
-    pdf.ln()
-
-    # Body
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(*COLOR_TEXT)
-    fill_row = False
-    for r in body:
-        if fill_row:
-            pdf.set_fill_color(245, 247, 250)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-        # Padding por celda (no usamos multi_cell para mantener altura fija)
-        for cell in r:
-            txt = _ascii_safe(cell.replace("**", ""))  # bold dentro de tablas: simplificamos
-            # Truncar si es muy largo
-            if pdf.get_string_width(txt) > col_w - 2:
-                while pdf.get_string_width(txt + "...") > col_w - 2 and len(txt) > 3:
-                    txt = txt[:-1]
-                txt = txt + "..."
-            pdf.cell(col_w, 6, txt, border=1, fill=True, align="L")
-        pdf.ln()
-        fill_row = not fill_row
-    pdf.ln(2)
-
-
-def _render_body(pdf: InstitutionalPDF, md: str):
-    """Recorre el markdown linea por linea."""
-    pdf.add_page()
+def _render_md_body(pdf: InstitutionalPDF, md: str):
+    """Renderea el cuerpo markdown del LLM con el estilo banking."""
     lines = md.split("\n")
     i = 0
     while i < len(lines):
         line = lines[i].rstrip()
-
         if not line.strip():
-            pdf.ln(2)
-            i += 1
-            continue
+            pdf.ln(1.5); i += 1; continue
 
         # Heading
         m = HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
-            text = _ascii_safe(re.sub(r"^\*+|\*+$", "", m.group(2)))
-            sizes = {1: 18, 2: 14, 3: 12, 4: 11}
-            colors_ = {1: COLOR_ACCENT, 2: COLOR_DARK, 3: COLOR_DARK, 4: COLOR_TEXT}
-            pdf.ln(3 if level > 1 else 5)
-            pdf.set_font("Helvetica", "B", sizes.get(level, 11))
-            pdf.set_text_color(*colors_.get(level, COLOR_TEXT))
-            pdf.multi_cell(0, 7, text)
-            # Linea decorativa bajo h2
+            text = re.sub(r"^\*+|\*+$", "", m.group(2))
+            sizes = {1: 15, 2: 13, 3: 11.5, 4: 10.5}
+            pdf.ln(2 if level > 1 else 4)
+            pdf.set_font(pdf._font, "B", sizes.get(level, 11))
+            pdf.set_text_color(*COLOR_ACCENT if level <= 2 else COLOR_DARK)
+            pdf.multi_cell(0, 6.5, _safe(text))
             if level == 2:
-                pdf.set_draw_color(*COLOR_ACCENT)
-                pdf.set_line_width(0.4)
-                y = pdf.get_y()
-                pdf.line(20, y, 50, y)
-            pdf.ln(1)
-            i += 1
-            continue
+                pdf.set_draw_color(*COLOR_ACCENT); pdf.set_line_width(0.3)
+                y = pdf.get_y(); pdf.line(20, y, 60, y)
+            pdf.ln(1); i += 1; continue
 
-        # Linea horizontal
+        # HR
         if HR_RE.match(line.strip()):
-            pdf.ln(2)
-            pdf.set_draw_color(*COLOR_DIM)
-            pdf.set_line_width(0.2)
-            y = pdf.get_y()
-            pdf.line(20, y, 190, y)
-            pdf.ln(3)
-            i += 1
-            continue
+            pdf.ln(2); pdf.set_draw_color(*COLOR_FAINT); pdf.set_line_width(0.2)
+            y = pdf.get_y(); pdf.line(20, y, 190, y); pdf.ln(3); i += 1; continue
 
-        # Tabla (siguiente linea debe ser separador)
+        # Tabla markdown
         if line.lstrip().startswith("|") and i + 1 < len(lines) and TABLE_SEP_RE.match(lines[i+1].strip()):
             table_lines = []
             while i < len(lines) and lines[i].strip().startswith("|"):
-                table_lines.append(lines[i])
-                i += 1
-            _render_table(pdf, table_lines)
-            continue
+                table_lines.append(lines[i]); i += 1
+            _render_md_table(pdf, table_lines); continue
 
         # Bullet
         m = BULLET_RE.match(line.strip())
         if m:
             indent = len(line) - len(line.lstrip())
             pdf.set_x(20 + indent * 1.5 + 4)
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font(pdf._font, "B", 10)
             pdf.set_text_color(*COLOR_ACCENT)
-            pdf.cell(4, 5, "-")
+            pdf.cell(4, 5, _safe("•" if HAS_DEJAVU else "-"))
             pdf.set_text_color(*COLOR_TEXT)
-            _render_paragraph(pdf, m.group(1), size=10)
-            i += 1
-            continue
+            _render_paragraph(pdf, m.group(1), size=10); i += 1; continue
 
         # Lista numerada
         m = NUM_RE.match(line.strip())
         if m:
             num_match = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
             num, txt = num_match.group(1), num_match.group(2)
-            pdf.set_x(24)
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(*COLOR_ACCENT)
-            pdf.cell(7, 5, f"{num}.")
+            pdf.set_x(24); pdf.set_font(pdf._font, "B", 10)
+            pdf.set_text_color(*COLOR_ACCENT); pdf.cell(7, 5, f"{num}.")
             pdf.set_text_color(*COLOR_TEXT)
-            _render_paragraph(pdf, txt, size=10)
-            i += 1
-            continue
+            _render_paragraph(pdf, txt, size=10); i += 1; continue
 
-        # Parrafo normal
-        _render_paragraph(pdf, line, size=10)
-        i += 1
+        # Parrafo
+        _render_paragraph(pdf, line, size=10); i += 1
 
 
-def markdown_to_pdf(md_text: str, titulo: str = "Reporte",
+# ===================== API PUBLICA =====================
+def markdown_to_pdf(md_text: str, titulo: str = "Informe de Cartera",
                     context: dict = None, charts: dict = None,
-                    cliente_friendly: bool = True) -> bytes:
+                    cliente_friendly: bool = True,
+                    nivel: str = "intermedio") -> bytes:
     """
-    API publica: markdown -> bytes PDF.
+    Construye el PDF estilo banking.
 
-    Si se pasa `context` (output de build_portfolio_context) y `charts`
-    (output de build_all_charts), se agregan secciones para el cliente:
-      - Resumen amigable con KPIs simples
-      - Pagina(s) con graficos PNG embebidos
-      - Glosario al final
-
-    `cliente_friendly` = False genera solo la version institucional (cover + body).
+    - Header con titulo + fecha en banda azul oscura.
+    - 3 KPIs grandes con barra coloreada (valor, rendimiento, rendimiento real).
+    - Seccion 1: evolucion de la cartera (tabla concepto/monto estilo banking).
+    - Seccion 2: composicion y evolucion (charts PNG).
+    - Seccion 3+: analisis del LLM (markdown renderizado).
+    - Footer en cada pagina con disclaimer + numero de pagina.
     """
-    pdf = InstitutionalPDF(titulo=titulo)
-    _emit_cover(pdf, titulo, context)
-    if cliente_friendly and context:
-        _emit_resumen_cliente(pdf, context)
-    if cliente_friendly and charts:
+    pf_meta = (context or {}).get("portfolio_meta") or {}
+    cliente = pf_meta.get("cliente") or pf_meta.get("nombre") or ""
+    hoy = datetime.now().strftime("%d/%m/%Y")
+    fecha_label = f"Posicion consolidada al {hoy}"
+    if cliente:
+        fecha_label = f"Cliente: {cliente}  ·  {fecha_label}"
+
+    pdf = InstitutionalPDF(titulo="Informe de Cartera", fecha_label=fecha_label)
+    pdf.add_page()
+
+    # 1. KPIs header
+    if context:
+        _emit_header_kpis(pdf, context)
+
+    # 2. Tabla concepto/monto
+    if context:
+        _emit_section_title(pdf, "1", "Como evoluciono tu cartera")
+        _emit_resumen_table(pdf, context)
+
+    # 3. Charts
+    if charts:
         _emit_charts(pdf, charts)
-    if cliente_friendly:
-        pdf.add_page()
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 10, "Analisis tecnico detallado",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_draw_color(*COLOR_ACCENT)
-        pdf.set_line_width(0.6)
-        pdf.line(20, pdf.get_y(), 50, pdf.get_y())
-        pdf.ln(6)
-        # Renderiza el markdown SIN nuevo add_page (lo hace _render_body)
-        _render_md_inline(pdf, md_text)
-    else:
-        _render_body(pdf, md_text)
-    if cliente_friendly:
-        _emit_glosario(pdf)
+
+    # 4. Analisis del LLM
+    if md_text and md_text.strip():
+        _emit_section_title(pdf, "3", "Analisis detallado")
+        _render_md_body(pdf, md_text)
 
     out = pdf.output()
     if isinstance(out, (bytes, bytearray)):
         return bytes(out)
     return out.encode("latin-1") if isinstance(out, str) else bytes(out)
-
-
-def _render_md_inline(pdf, md: str):
-    """Igual que _render_body pero sin agregar pagina nueva (ya estamos en una)."""
-    lines = md.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i].rstrip()
-        if not line.strip():
-            pdf.ln(2); i += 1; continue
-        m = HEADING_RE.match(line)
-        if m:
-            level = len(m.group(1))
-            text = _ascii_safe(re.sub(r"^\*+|\*+$", "", m.group(2)))
-            sizes = {1: 18, 2: 14, 3: 12, 4: 11}
-            colors_ = {1: COLOR_ACCENT, 2: COLOR_DARK, 3: COLOR_DARK, 4: COLOR_TEXT}
-            pdf.ln(3 if level > 1 else 5)
-            pdf.set_font("Helvetica", "B", sizes.get(level, 11))
-            pdf.set_text_color(*colors_.get(level, COLOR_TEXT))
-            pdf.multi_cell(0, 7, text)
-            if level == 2:
-                pdf.set_draw_color(*COLOR_ACCENT); pdf.set_line_width(0.4)
-                y = pdf.get_y(); pdf.line(20, y, 50, y)
-            pdf.ln(1); i += 1; continue
-        if HR_RE.match(line.strip()):
-            pdf.ln(2); pdf.set_draw_color(*COLOR_DIM); pdf.set_line_width(0.2)
-            y = pdf.get_y(); pdf.line(20, y, 190, y); pdf.ln(3); i += 1; continue
-        if line.lstrip().startswith("|") and i + 1 < len(lines) and TABLE_SEP_RE.match(lines[i+1].strip()):
-            table_lines = []
-            while i < len(lines) and lines[i].strip().startswith("|"):
-                table_lines.append(lines[i]); i += 1
-            _render_table(pdf, table_lines); continue
-        m = BULLET_RE.match(line.strip())
-        if m:
-            indent = len(line) - len(line.lstrip())
-            pdf.set_x(20 + indent * 1.5 + 4)
-            pdf.set_font("Helvetica", "", 10); pdf.set_text_color(*COLOR_ACCENT)
-            pdf.cell(4, 5, "-"); pdf.set_text_color(*COLOR_TEXT)
-            _render_paragraph(pdf, m.group(1), size=10); i += 1; continue
-        m = NUM_RE.match(line.strip())
-        if m:
-            num_match = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
-            num, txt = num_match.group(1), num_match.group(2)
-            pdf.set_x(24); pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(*COLOR_ACCENT); pdf.cell(7, 5, f"{num}.")
-            pdf.set_text_color(*COLOR_TEXT)
-            _render_paragraph(pdf, txt, size=10); i += 1; continue
-        _render_paragraph(pdf, line, size=10); i += 1
-
-
-def _emit_resumen_cliente(pdf: InstitutionalPDF, context: dict):
-    """Pagina 'Resumen para el cliente' con KPIs simples y lenguaje claro."""
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.cell(0, 10, "Resumen para el cliente",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_draw_color(*COLOR_ACCENT); pdf.set_line_width(0.6)
-    pdf.line(20, pdf.get_y(), 50, pdf.get_y())
-    pdf.ln(8)
-
-    port = context.get("portfolio") or {}
-    metrics = context.get("metrics") or {}
-    benchmarks = context.get("benchmarks") or {}
-
-    valor = port.get("valor_total_ars")
-    valor_usd = port.get("valor_total_usd_mep")
-    pnl_pct = port.get("pnl_nominal_pct")
-    pnl_real_pct = port.get("pnl_real_pct")
-    cagr_pct = metrics.get("cagr_pct")
-    dias = metrics.get("equity_curve_dias")
-
-    # Frase intro
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_text_color(*COLOR_TEXT)
-    if valor is not None and dias:
-        intro = (f"Al dia de la fecha, tu cartera tiene un valor total de "
-                 f"$ {valor:,.0f} (equivalente a USD {valor_usd:,.0f} al MEP). "
-                 f"Este reporte analiza el desempeno de los ultimos {dias} dias.")
-        pdf.multi_cell(0, 6, _ascii_safe(intro))
-        pdf.ln(2)
-
-    # KPIs en cajas
-    _emit_kpi_boxes(pdf, [
-        ("Cuanto vale hoy",         f"$ {valor:,.0f}" if valor else "—",       "Total en pesos"),
-        ("Equivalente en USD",      f"US$ {valor_usd:,.0f}" if valor_usd else "—", "Al dolar MEP"),
-        ("Ganancia / Perdida",      f"{pnl_pct:+.2f}%" if pnl_pct is not None else "—",
-         "Sin descontar inflacion"),
-        ("Ganancia real (vs CER)",  f"{pnl_real_pct:+.2f}%" if pnl_real_pct is not None else "—",
-         "Descontando inflacion"),
-    ])
-
-    pdf.ln(4)
-
-    # Interpretacion en lenguaje simple
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.cell(0, 7, "Como leer estos numeros",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(*COLOR_TEXT)
-    interpretaciones = []
-    if pnl_pct is not None:
-        if pnl_pct > 0:
-            interpretaciones.append(
-                f"En terminos nominales (pesos sin ajustar), la cartera subio "
-                f"{pnl_pct:.2f}% desde que se cargaron las posiciones."
-            )
-        else:
-            interpretaciones.append(
-                f"En terminos nominales (pesos sin ajustar), la cartera bajo "
-                f"{abs(pnl_pct):.2f}% desde que se cargaron las posiciones."
-            )
-    if pnl_real_pct is not None and pnl_pct is not None:
-        if pnl_real_pct < pnl_pct:
-            interpretaciones.append(
-                f"Descontando la inflacion (CER), la perdida real del poder "
-                f"adquisitivo es de {pnl_real_pct:.2f}%. Esto es lo que importa "
-                f"para saber si tu plata 'compra mas o menos' que antes."
-            )
-    if benchmarks:
-        comp = benchmarks.get("comparativas", {})
-        port_ret = benchmarks.get("portfolio_retorno_pct", 0)
-        ganados, perdidos = [], []
-        bm_labels = {
-            "merval_ars_pct": "el Merval",
-            "spy_en_ars_pct": "el S&P 500 en pesos",
-            "usd_mep_buyhold_pct": "comprar dolar MEP",
-            "inflacion_acumulada_pct": "la inflacion",
-        }
-        for k, label in bm_labels.items():
-            v = comp.get(k)
-            if v is None:
-                continue
-            diff = port_ret - v
-            if diff > 0:
-                ganados.append(f"{label} ({diff:+.1f} pp)")
-            else:
-                perdidos.append(f"{label} ({diff:+.1f} pp)")
-        if ganados:
-            interpretaciones.append(
-                "En el mismo periodo, la cartera rindio mas que: " +
-                ", ".join(ganados) + ".")
-        if perdidos:
-            interpretaciones.append(
-                "Y rindio menos que: " + ", ".join(perdidos) + ".")
-
-    for txt in interpretaciones:
-        pdf.set_x(22)
-        pdf.set_text_color(*COLOR_ACCENT)
-        pdf.cell(4, 5, "-")
-        pdf.set_text_color(*COLOR_TEXT)
-        pdf.multi_cell(0, 5, _ascii_safe(txt))
-        pdf.ln(1)
-
-
-def _emit_kpi_boxes(pdf: InstitutionalPDF, kpis: list):
-    """Caja por KPI en 2 columnas."""
-    box_w = (pdf.w - pdf.l_margin - pdf.r_margin - 6) / 2  # 6 = gap
-    box_h = 24
-    y_start = pdf.get_y()
-    for i, (titulo, valor, subtitulo) in enumerate(kpis):
-        col = i % 2
-        row = i // 2
-        x = pdf.l_margin + col * (box_w + 6)
-        y = y_start + row * (box_h + 4)
-        # Borde redondeado simulado con rect
-        pdf.set_draw_color(220, 224, 230)
-        pdf.set_fill_color(248, 250, 252)
-        pdf.rect(x, y, box_w, box_h, "DF")
-        # Titulo
-        pdf.set_xy(x + 4, y + 3)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.cell(box_w - 8, 4, _ascii_safe(titulo.upper()))
-        # Valor grande
-        pdf.set_xy(x + 4, y + 8)
-        pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(box_w - 8, 7, _ascii_safe(valor))
-        # Subtitulo
-        pdf.set_xy(x + 4, y + 17)
-        pdf.set_font("Helvetica", "I", 8)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.cell(box_w - 8, 4, _ascii_safe(subtitulo))
-    pdf.set_y(y_start + ((len(kpis) + 1) // 2) * (box_h + 4))
-
-
-def _emit_charts(pdf: InstitutionalPDF, charts: dict):
-    """Pagina(s) con los graficos PNG generados."""
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.cell(0, 10, "Visualizaciones",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_draw_color(*COLOR_ACCENT); pdf.set_line_width(0.6)
-    pdf.line(20, pdf.get_y(), 50, pdf.get_y())
-    pdf.ln(6)
-
-    # Equity curve
-    if charts.get("equity"):
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 6, "Como evoluciono tu cartera",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.multi_cell(0, 4,
-            "El grafico muestra el valor diario de la cartera en pesos a lo "
-            "largo del tiempo. Si la linea sube, ganaste; si baja, perdiste.")
-        pdf.ln(2)
-        try:
-            buf = io.BytesIO(charts["equity"])
-            pdf.image(buf, x=pdf.l_margin, w=170)
-            pdf.ln(4)
-        except Exception:
-            pass
-
-    # Allocation
-    if charts.get("allocation"):
-        # Si no entra en la pagina, hacer una nueva
-        if pdf.get_y() > 180:
-            pdf.add_page()
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 6, "En que esta invertida la cartera",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.multi_cell(0, 4,
-            "Cada porcion representa una clase de activo (acciones argentinas, "
-            "cedears, bonos, etc). Una cartera bien diversificada no concentra "
-            "todo en una sola clase.")
-        pdf.ln(2)
-        try:
-            buf = io.BytesIO(charts["allocation"])
-            pdf.image(buf, x=pdf.l_margin, w=170)
-            pdf.ln(4)
-        except Exception:
-            pass
-
-    # vs Benchmarks
-    if charts.get("benchmarks"):
-        if pdf.get_y() > 180:
-            pdf.add_page()
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 6, "Comparacion con alternativas",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*COLOR_DIM)
-        pdf.multi_cell(0, 4,
-            "Comparacion del rendimiento del portfolio (en verde) contra "
-            "alternativas pasivas en el mismo periodo: Merval, S&P 500 en "
-            "pesos, comprar dolar MEP y la inflacion. La barra mas alta es "
-            "la que mas rindio.")
-        pdf.ln(2)
-        try:
-            buf = io.BytesIO(charts["benchmarks"])
-            pdf.image(buf, x=pdf.l_margin, w=170)
-            pdf.ln(4)
-        except Exception:
-            pass
-
-
-def _emit_glosario(pdf: InstitutionalPDF):
-    """Glosario al final del PDF con definiciones simples."""
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*COLOR_DARK)
-    pdf.cell(0, 10, "Glosario",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_draw_color(*COLOR_ACCENT); pdf.set_line_width(0.6)
-    pdf.line(20, pdf.get_y(), 50, pdf.get_y())
-    pdf.ln(8)
-
-    entradas = [
-        ("CER / Inflacion",
-         "Indice que mide cuanto se desvalorizan los pesos. Si la inflacion "
-         "fue 30% y tu cartera subio 20%, en terminos REALES perdiste 10%."),
-        ("Rendimiento nominal",
-         "Cuanto subio o bajo en pesos sin descontar inflacion."),
-        ("Rendimiento real",
-         "Rendimiento nominal MENOS la inflacion del periodo. Es el "
-         "verdadero poder adquisitivo ganado/perdido."),
-        ("Dolar MEP",
-         "Tipo de cambio implicito al comprar bonos en pesos y venderlos "
-         "en dolares. Es el dolar 'legal' de mercado."),
-        ("CEDEARs",
-         "Certificados Argentinos que representan acciones del exterior "
-         "(AAPL, MSFT, etc) y cotizan en pesos. Tienen el atractivo de "
-         "estar 'dolarizados' implicitamente."),
-        ("Merval",
-         "Indice de las principales acciones argentinas (GGAL, PAMP, YPF...). "
-         "Es el benchmark del mercado local."),
-        ("S&P 500 (SPY)",
-         "Indice de las 500 empresas mas grandes de USA. Benchmark global."),
-        ("Volatilidad anualizada",
-         "Cuanto fluctua el valor de la cartera, expresado anualmente. "
-         "Volatilidad alta = riesgo mayor."),
-        ("Sharpe Ratio",
-         "Retorno por unidad de riesgo asumido. Mas alto = mejor relacion "
-         "rendimiento/riesgo. > 1 es bueno, > 2 es excelente."),
-        ("Sortino Ratio",
-         "Como Sharpe pero solo considera la volatilidad a la baja. Penaliza "
-         "solo los movimientos negativos."),
-        ("Drawdown",
-         "Caida desde el maximo previo. Mide la peor 'racha mala' del "
-         "portfolio."),
-        ("VaR (Value at Risk)",
-         "Perdida diaria maxima esperada con 95% de probabilidad. Ej: "
-         "VaR 95% = -3% significa que en peor caso normal perdes 3% en un dia."),
-        ("Riesgo pais (EMBI)",
-         "Sobretasa que pagan los bonos argentinos sobre los del Tesoro USA. "
-         "A mayor EMBI, mayor percepcion de riesgo de default."),
-        ("HHI (concentracion)",
-         "Indice que mide cuan concentrada esta la cartera. > 2500 = "
-         "concentracion alta; < 1500 = diversificacion saludable."),
-    ]
-    for termino, definicion in entradas:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(*COLOR_DARK)
-        pdf.cell(0, 5, _ascii_safe(termino),
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*COLOR_TEXT)
-        pdf.multi_cell(0, 4, _ascii_safe(definicion))
-        pdf.ln(2)
