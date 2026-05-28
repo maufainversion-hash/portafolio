@@ -1,8 +1,7 @@
 """
 Dashboard principal: KPIs, equity curve, donut de allocation y tabla de posiciones.
-Incluye formulario para agregar nuevas tenencias.
+La gestion de tenencias (alta/baja) vive en el tab Cartera.
 """
-from datetime import date
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -10,22 +9,8 @@ import streamlit as st
 
 from core.portfolio import (
     load_tenencias, valuar_tenencias, convertir_a, equity_curve,
-    add_tenencia, delete_tenencia,
 )
-from core.data import get_dolares
 from core.ui import fmt_money, fmt_pct, kpi_card, kpi_row, style_fig
-
-
-def _fmt_money(v: float, simbolo: str = "$") -> str:
-    if pd.isna(v) or v is None:
-        return "—"
-    return f"{simbolo} {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def _fmt_pct(v: float) -> str:
-    if pd.isna(v) or v is None:
-        return "—"
-    return f"{v:+.2f}%"
 
 
 def render():
@@ -33,8 +18,7 @@ def render():
 
     df = load_tenencias()
     if df.empty:
-        st.info("No tenes tenencias cargadas. Agrega una desde el formulario de abajo.")
-        _formulario_alta(expanded=True)
+        st.info("Todavia no tenes tenencias cargadas. Ir al tab **Cartera** para agregar tu primer activo.")
         return
 
     with st.spinner("Trayendo precios..."):
@@ -128,40 +112,4 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Eliminar tenencia
-    with st.expander("Eliminar tenencia"):
-        ids = df_val["id"].tolist()
-        labels = [f"{r['ticker']} ({r['tipo']}) — id {r['id']}" for _, r in df_val.iterrows()]
-        if ids:
-            elegido = st.selectbox("Tenencia a eliminar", options=ids,
-                                   format_func=lambda i: labels[ids.index(i)])
-            if st.button("Eliminar", type="primary"):
-                delete_tenencia(int(elegido))
-                st.success("Tenencia eliminada.")
-                st.rerun()
-
-    _formulario_alta()
-
-
-def _formulario_alta(expanded: bool = False):
-    with st.expander("➕ Agregar tenencia", expanded=expanded):
-        with st.form("alta_tenencia", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                ticker = st.text_input("Ticker (ej: GGAL.BA, AAPL, BTC-USD)").strip()
-                tipo = st.selectbox("Tipo", options=[
-                    "accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto",
-                ])
-                cantidad = st.number_input("Cantidad", min_value=0.0, value=1.0, step=1.0, format="%.6f")
-            with c2:
-                precio = st.number_input("Precio de compra", min_value=0.0, value=0.0, format="%.2f")
-                moneda = st.selectbox("Moneda compra", options=["ARS", "USD"])
-                fecha = st.date_input("Fecha de compra", value=date.today())
-            ok = st.form_submit_button("Agregar", type="primary", use_container_width=True)
-            if ok:
-                if not ticker or cantidad <= 0 or precio <= 0:
-                    st.error("Completa ticker, cantidad y precio.")
-                else:
-                    add_tenencia(ticker, tipo, cantidad, precio, moneda, fecha)
-                    st.success(f"Tenencia {ticker} agregada.")
-                    st.rerun()
+    st.caption("Gestiona tus tenencias (alta/baja) desde el tab **Cartera**.")

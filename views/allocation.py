@@ -25,6 +25,14 @@ def render():
         df_val = valuar_tenencias(df)
         df_val = convertir_a(df_val, "ARS", tipo_dolar="mep")
 
+    # Filtramos posiciones sin precio o con valor 0/NaN para que los graficos
+    # (treemap/sunburst) no rompan con ZeroDivisionError.
+    df_val = df_val[df_val["valor_actual_ars"].notna()
+                    & (df_val["valor_actual_ars"] > 0)].copy()
+    if df_val.empty:
+        st.warning("No hay posiciones con valor actual para graficar (Yahoo no devolvio precios).")
+        return
+
     enriquecer = st.toggle(
         "Enriquecer con sector y pais (yfinance, mas lento)",
         value=False,
@@ -71,8 +79,9 @@ def render():
 
 def _treemap(df: pd.DataFrame, field: str, titulo: str):
     agg = allocation_by(df, field, "valor_actual_ars")
-    if agg.empty:
-        st.info("Sin datos.")
+    agg = agg[agg["valor_actual_ars"] > 0]
+    if agg.empty or agg["valor_actual_ars"].sum() <= 0:
+        st.info("Sin datos para graficar.")
         return
     fig = px.treemap(
         agg, path=[field], values="valor_actual_ars",

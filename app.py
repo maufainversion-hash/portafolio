@@ -8,7 +8,9 @@ from streamlit_option_menu import option_menu
 
 from core.db import init_db
 from core.ui import inject_css
-from views import dashboard, allocation, performance, rebalanceo, contexto_ar
+from views import (
+    dashboard, cartera, allocation, performance, rebalanceo, contexto_ar,
+)
 
 
 st.set_page_config(
@@ -20,8 +22,8 @@ st.set_page_config(
 
 inject_css()
 
-# Inicializar DB + seed
-init_db(seed=True)
+# Inicializar DB (sin seed; el usuario arranca con cartera vacia)
+init_db(seed=False)
 
 # Encabezado
 st.markdown(
@@ -44,8 +46,8 @@ st.markdown(
 # Navegacion horizontal estilo screenshot
 selected = option_menu(
     menu_title=None,
-    options=["Dashboard", "Allocation", "Performance", "Rebalanceo", "Contexto AR"],
-    icons=["bar-chart-fill", "pie-chart-fill", "graph-up-arrow",
+    options=["Dashboard", "Cartera", "Allocation", "Performance", "Rebalanceo", "Contexto AR"],
+    icons=["bar-chart-fill", "wallet2", "pie-chart-fill", "graph-up-arrow",
            "sliders", "flag-fill"],
     orientation="horizontal",
     default_index=0,
@@ -80,6 +82,8 @@ selected = option_menu(
 # Router
 if selected == "Dashboard":
     dashboard.render()
+elif selected == "Cartera":
+    cartera.render()
 elif selected == "Allocation":
     allocation.render()
 elif selected == "Performance":
