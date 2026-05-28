@@ -159,7 +159,7 @@ def valuar_tenencias(df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     df = df.copy()
     precios, monedas = [], []
     for _, row in df.iterrows():
-        p = get_last_price(row["ticker"])
+        p = get_last_price(row["ticker"], row["tipo"])
         precios.append(p if p is not None else np.nan)
         monedas.append(_moneda_nativa(row["tipo"]))
 

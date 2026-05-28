@@ -36,9 +36,28 @@ def _yticker(tk: str):
 # -----------------------------------------------------------------------------
 # YFINANCE
 # -----------------------------------------------------------------------------
+# Tipos que cotizan en BYMA y para los que probamos data912 primero.
+_TIPOS_AR = {"accion_ar", "cedear", "bono"}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
-def get_last_price(ticker: str) -> Optional[float]:
-    """Ultimo precio de cierre disponible. None si falla."""
+def get_last_price(ticker: str, tipo: Optional[str] = None) -> Optional[float]:
+    """
+    Ultimo precio de cierre.
+    Para tipos argentinos (accion_ar / cedear / bono) intenta data912 primero
+    (BYMA en vivo, sin sufijo .BA, con ajuste /100 para bonos) y cae a yfinance.
+    Para US / ETF / cripto usa yfinance directo.
+    """
+    if tipo in _TIPOS_AR:
+        try:
+            from core.data_ar import get_price_ar
+            p = get_price_ar(ticker, tipo)
+            if p is not None:
+                return p
+        except Exception:
+            pass
+
+    # Fallback: yfinance
     try:
         t = _yticker(ticker)
         hist = t.history(period="5d", auto_adjust=False)
