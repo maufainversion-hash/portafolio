@@ -3,12 +3,22 @@ Vista Cartera: gestion de tenencias.
 - Alta con filtro por tipo + ticker.
 - Listado de tenencias actuales con boton de eliminar.
 """
+import io
+import os
 from datetime import date
 import pandas as pd
 import streamlit as st
 
-from core.portfolio import load_tenencias, add_tenencia, delete_tenencia
+from core.portfolio import (
+    load_tenencias, add_tenencia, delete_tenencia, delete_all_tenencias,
+    parse_csv_tenencias, bulk_add_tenencias,
+)
 from core.ui import fmt_money
+
+# Paths a CSV versionados
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CSV_MAUFA = os.path.join(_BASE_DIR, "data", "maufa_tenencias.csv")
+CSV_TEMPLATE = os.path.join(_BASE_DIR, "data", "template_tenencias.csv")
 
 
 # Catalogo de tipos de activo (label visible -> codigo interno)
@@ -38,6 +48,8 @@ def render():
     st.subheader("Cartera")
 
     _alta()
+    st.divider()
+    _importar()
     st.divider()
     _listado()
 
@@ -84,6 +96,94 @@ def _alta():
                 add_tenencia(ticker, tipo_code, cantidad, precio, moneda, fecha)
                 st.success(f"✔ Tenencia {ticker.upper()} agregada.")
                 st.rerun()
+
+
+def _importar():
+    with st.expander("📥 Importar tenencias en bloque", expanded=False):
+        st.markdown(
+            "Formato esperado: `ticker,tipo,cantidad,precio_compra,moneda_compra,fecha_compra`. "
+            "Tipos validos: accion_ar, cedear, accion_us, etf, bono, fci, cripto. "
+            "Moneda: ARS o USD. Fecha: YYYY-MM-DD."
+        )
+
+        tab_maufa, tab_csv, tab_paste = st.tabs([
+            "🏷 Portafolio Maufa", "📄 Subir CSV", "📋 Pegar CSV",
+        ])
+
+        # ----- Portafolio Maufa -----
+        with tab_maufa:
+            st.caption("Carga las 10 tenencias del portafolio real (TXAR, YPFD, AE38, "
+                       "FXI, LMT, MELI, META, PFE, TM, V).")
+            df_maufa = pd.read_csv(CSV_MAUFA)
+            st.dataframe(df_maufa, use_container_width=True, hide_index=True)
+            col_a, col_b = st.columns([1, 3])
+            with col_a:
+                reemplazar_m = st.checkbox("Reemplazar todo", value=True, key="m_replace",
+                                           help="Borra tenencias actuales antes de cargar.")
+            if col_b.button("Cargar portafolio Maufa", type="primary",
+                            use_container_width=True, key="btn_maufa"):
+                _ejecutar_import(df_maufa, reemplazar_m)
+
+        # ----- CSV upload -----
+        with tab_csv:
+            with open(CSV_TEMPLATE, "rb") as f:
+                st.download_button("⬇ Descargar plantilla CSV", data=f.read(),
+                                   file_name="template_tenencias.csv",
+                                   mime="text/csv", use_container_width=False)
+            up = st.file_uploader("Subir archivo CSV", type=["csv"], key="csv_up")
+            if up is not None:
+                try:
+                    df_up = pd.read_csv(up)
+                except Exception as e:
+                    st.error(f"No pude leer el CSV: {e}")
+                    return
+                st.dataframe(df_up, use_container_width=True, hide_index=True)
+                col_a, col_b = st.columns([1, 3])
+                with col_a:
+                    reemplazar_u = st.checkbox("Reemplazar todo", value=False,
+                                               key="u_replace")
+                if col_b.button("Cargar CSV", type="primary",
+                                use_container_width=True, key="btn_csv"):
+                    _ejecutar_import(df_up, reemplazar_u)
+
+        # ----- Paste -----
+        with tab_paste:
+            txt = st.text_area(
+                "Pega aca tu CSV (con header)", height=180,
+                placeholder="ticker,tipo,cantidad,precio_compra,moneda_compra,fecha_compra\n"
+                            "GGAL.BA,accion_ar,100,4500,ARS,2024-06-01",
+                key="csv_paste",
+            )
+            if txt.strip():
+                try:
+                    df_p = pd.read_csv(io.StringIO(txt))
+                except Exception as e:
+                    st.error(f"No pude parsear: {e}")
+                    return
+                st.dataframe(df_p, use_container_width=True, hide_index=True)
+                col_a, col_b = st.columns([1, 3])
+                with col_a:
+                    reemplazar_p = st.checkbox("Reemplazar todo", value=False,
+                                               key="p_replace")
+                if col_b.button("Cargar pegado", type="primary",
+                                use_container_width=True, key="btn_paste"):
+                    _ejecutar_import(df_p, reemplazar_p)
+
+
+def _ejecutar_import(df_csv: pd.DataFrame, reemplazar: bool):
+    df_clean, errores = parse_csv_tenencias(df_csv)
+    if errores:
+        st.error("No pude importar. Errores encontrados:")
+        for e in errores:
+            st.markdown(f"- {e}")
+        return
+    if reemplazar:
+        n_borradas = delete_all_tenencias()
+        if n_borradas > 0:
+            st.warning(f"Se borraron {n_borradas} tenencias previas.")
+    n = bulk_add_tenencias(df_clean)
+    st.success(f"✔ Se importaron {n} tenencias.")
+    st.rerun()
 
 
 def _listado():

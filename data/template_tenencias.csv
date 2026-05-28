@@ -1,0 +1,4 @@
+ticker,tipo,cantidad,precio_compra,moneda_compra,fecha_compra
+GGAL.BA,accion_ar,100,4500.00,ARS,2024-06-01
+AAPL,accion_us,5,180.00,USD,2024-03-10
+BTC-USD,cripto,0.05,62000.00,USD,2024-08-01

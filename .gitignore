@@ -17,6 +17,8 @@ data/*.db
 data/*.db-journal
 data/*.csv
 !data/.gitkeep
+!data/maufa_tenencias.csv
+!data/template_tenencias.csv
 
 # Streamlit
 .streamlit/secrets.toml

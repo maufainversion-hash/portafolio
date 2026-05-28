@@ -63,6 +63,74 @@ def delete_tenencia(id_: int) -> None:
             s.commit()
 
 
+def delete_all_tenencias() -> int:
+    """Borra todas las tenencias. Devuelve cuantas habia."""
+    with get_session() as s:
+        n = s.query(Tenencia).delete()
+        s.commit()
+        return n
+
+
+COLUMNAS_CSV = ["ticker", "tipo", "cantidad", "precio_compra",
+                "moneda_compra", "fecha_compra"]
+TIPOS_VALIDOS = {"accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto"}
+
+
+def parse_csv_tenencias(df_csv: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Valida un DataFrame con tenencias. Devuelve (df_limpio, lista_de_errores).
+    Columnas esperadas: ticker, tipo, cantidad, precio_compra, moneda_compra, fecha_compra
+    """
+    errores = []
+    faltantes = [c for c in COLUMNAS_CSV if c not in df_csv.columns]
+    if faltantes:
+        errores.append(f"Faltan columnas: {', '.join(faltantes)}")
+        return pd.DataFrame(), errores
+
+    df = df_csv[COLUMNAS_CSV].copy()
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    df["tipo"] = df["tipo"].astype(str).str.strip().str.lower()
+    df["moneda_compra"] = df["moneda_compra"].astype(str).str.strip().str.upper()
+    df["cantidad"] = pd.to_numeric(df["cantidad"], errors="coerce")
+    df["precio_compra"] = pd.to_numeric(df["precio_compra"], errors="coerce")
+    df["fecha_compra"] = pd.to_datetime(df["fecha_compra"], errors="coerce").dt.date
+
+    for i, row in df.iterrows():
+        if not row["ticker"]:
+            errores.append(f"Fila {i+1}: ticker vacio")
+        if row["tipo"] not in TIPOS_VALIDOS:
+            errores.append(f"Fila {i+1}: tipo invalido '{row['tipo']}' "
+                           f"(validos: {', '.join(sorted(TIPOS_VALIDOS))})")
+        if pd.isna(row["cantidad"]) or row["cantidad"] <= 0:
+            errores.append(f"Fila {i+1}: cantidad invalida")
+        if pd.isna(row["precio_compra"]) or row["precio_compra"] <= 0:
+            errores.append(f"Fila {i+1}: precio_compra invalido")
+        if row["moneda_compra"] not in ("ARS", "USD"):
+            errores.append(f"Fila {i+1}: moneda_compra debe ser ARS o USD")
+        if pd.isna(row["fecha_compra"]):
+            errores.append(f"Fila {i+1}: fecha_compra invalida (usar YYYY-MM-DD)")
+
+    return df, errores
+
+
+def bulk_add_tenencias(df: pd.DataFrame) -> int:
+    """Inserta varias tenencias. Devuelve cuantas inserto."""
+    n = 0
+    with get_session() as s:
+        for _, r in df.iterrows():
+            s.add(Tenencia(
+                ticker=r["ticker"],
+                tipo=r["tipo"],
+                cantidad=float(r["cantidad"]),
+                precio_compra=float(r["precio_compra"]),
+                moneda_compra=r["moneda_compra"],
+                fecha_compra=r["fecha_compra"],
+            ))
+            n += 1
+        s.commit()
+    return n
+
+
 # -----------------------------------------------------------------------------
 # VALUACION
 # -----------------------------------------------------------------------------
