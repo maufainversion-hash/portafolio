@@ -9,8 +9,12 @@ import streamlit as st
 
 from core.portfolio import (
     load_tenencias, valuar_tenencias, convertir_a, equity_curve,
+    agregar_pnl_real,
 )
 from core.ui import fmt_money, fmt_pct, kpi_card, kpi_row, style_fig
+from core.currency import (
+    fmt_display, convert_ars, display_label, display_symbol,
+)
 
 
 def render():
@@ -25,6 +29,7 @@ def render():
         df_val = valuar_tenencias(df)
         df_val = convertir_a(df_val, "ARS", tipo_dolar="mep")
         df_val = convertir_a(df_val, "USD", tipo_dolar="mep")
+        df_val = agregar_pnl_real(df_val)
 
     # P&L se calcula SOLO sobre posiciones con precio valido,
     # para no contar como perdida total las que no se pudieron valuar.
@@ -37,18 +42,25 @@ def render():
     pnl_ars   = valor_ars - costo_ars
     pnl_pct   = (pnl_ars / costo_ars * 100) if costo_ars else 0
 
+    # P&L real (ajustado por inflacion CER)
+    costo_real_ars = validos["costo_real_ars"].sum() if "costo_real_ars" in validos else costo_ars
+    pnl_real_ars   = valor_ars - costo_real_ars
+    pnl_real_pct   = (pnl_real_ars / costo_real_ars * 100) if costo_real_ars else 0
+
     if sin_precio > 0:
         st.warning(
             f"⚠️ {sin_precio} de {len(df_val)} posiciones sin precio actual "
             "(Yahoo puede estar limitando el acceso). El P&L se calcula sobre las valuadas."
         )
 
-    # KPIs premium (HTML cards)
+    # KPIs premium (HTML cards) — todo en la moneda de display elegida
+    ccy = display_label()
     kpi_row([
-        kpi_card("Valor total (ARS)", fmt_money(valor_ars, "$")),
-        kpi_card("Valor total (USD MEP)", fmt_money(valor_usd, "US$")),
-        kpi_card("P&L total (ARS)", fmt_money(pnl_ars, "$"),
+        kpi_card(f"Valor total ({ccy})", fmt_display(valor_ars)),
+        kpi_card(f"P&L nominal ({ccy})", fmt_display(pnl_ars),
                  delta=fmt_pct(pnl_pct), positive=(pnl_ars >= 0)),
+        kpi_card(f"P&L real (vs CER)", fmt_display(pnl_real_ars),
+                 delta=fmt_pct(pnl_real_pct), positive=(pnl_real_ars >= 0)),
         kpi_card("Posiciones valuadas", f"{len(validos)} / {len(df_val)}"),
     ])
 
@@ -57,18 +69,21 @@ def render():
     # Equity curve + Donut
     col_chart, col_donut = st.columns([2, 1])
     with col_chart:
-        st.markdown("**Equity curve (6 meses, ARS)**")
+        st.markdown(f"**Equity curve (6 meses, {ccy})**")
         with st.spinner("Calculando equity curve..."):
             curve = equity_curve(df, period="6mo")
         if curve.empty:
             st.warning("No se pudo calcular la equity curve (sin datos historicos).")
         else:
+            curve_disp = curve.apply(convert_ars)
+            sym = display_symbol()
             fig = go.Figure()
             fig.add_trace(go.Scatter(
-                x=curve.index, y=curve.values,
-                mode="lines", line=dict(color="#22c55e", width=2),
-                fill="tozeroy", fillcolor="rgba(34,197,94,0.10)",
+                x=curve_disp.index, y=curve_disp.values,
+                mode="lines", line=dict(color="#34d399", width=2),
+                fill="tozeroy", fillcolor="rgba(52,211,153,0.10)",
                 name="Valor",
+                hovertemplate=f"<b>%{{x|%d %b %Y}}</b><br>{sym} %{{y:,.0f}}<extra></extra>",
             ))
             style_fig(fig, height=320)
             st.plotly_chart(fig, use_container_width=True)
@@ -109,6 +124,7 @@ _TIPO_ORDER = ["accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto
 
 def _render_posiciones_agrupadas(df_val: pd.DataFrame):
     """Tabla agrupada por tipo, cada grupo colapsable con sus sub-totales."""
+    ccy = display_label()
     bloques = []
     for tipo in _TIPO_ORDER:
         grupo = df_val[df_val["tipo"] == tipo]
@@ -124,20 +140,25 @@ def _render_posiciones_agrupadas(df_val: pd.DataFrame):
         sub_pct = (sub_pnl / sub_costo * 100) if sub_costo else 0
         sub_cls = "pnl-pos" if sub_pnl >= 0 else "pnl-neg"
 
-        # Filas
+        # Filas (todo reexpresado en la moneda activa)
         filas = ""
         for _, r in grupo.iterrows():
             pnl = r.get("pnl_ars")
             pnl_p = r.get("pnl_pct")
+            pnl_real_p = r.get("pnl_real_pct")
             cls = "pnl-pos" if (pd.notna(pnl) and pnl >= 0) else "pnl-neg"
+            cls_real = "pnl-pos" if (pd.notna(pnl_real_p) and pnl_real_p >= 0) else "pnl-neg"
+            # precio_actual esta en moneda nativa (ARS para AR/cedear/bono,
+            # USD para US/ETF/cripto). Lo dejamos asi y mostramos su simbolo.
             filas += (
                 "<tr>"
                 f"<td><span class='tk-badge'>{r['ticker']}</span></td>"
                 f"<td>{r['cantidad']:.4f}</td>"
                 f"<td>{fmt_money(r.get('precio_actual'))}</td>"
-                f"<td>{fmt_money(r.get('valor_actual_ars'))}</td>"
-                f"<td class='{cls}'>{fmt_money(pnl)}</td>"
+                f"<td>{fmt_display(r.get('valor_actual_ars'))}</td>"
+                f"<td class='{cls}'>{fmt_display(pnl)}</td>"
                 f"<td class='{cls}'>{fmt_pct(pnl_p)}</td>"
+                f"<td class='{cls_real}'>{fmt_pct(pnl_real_p)}</td>"
                 "</tr>"
             )
 
@@ -151,14 +172,14 @@ def _render_posiciones_agrupadas(df_val: pd.DataFrame):
               <span class="grp-count">{len(grupo)}</span>
             </span>
             <span class="grp-right">
-              <span class="grp-total">{fmt_money(sub_valor)}</span>
+              <span class="grp-total">{fmt_display(sub_valor)}</span>
               <span class="grp-delta {sub_cls}">{fmt_pct(sub_pct)}</span>
             </span>
           </summary>
           <table class="pos-table">
             <thead><tr>
               <th>Activo</th><th>Cantidad</th><th>P. actual</th>
-              <th>Valor (ARS)</th><th>P&L (ARS)</th><th>P&L %</th>
+              <th>Valor ({ccy})</th><th>P&L ({ccy})</th><th>P&L %</th><th>P&L real %</th>
             </tr></thead>
             <tbody>{filas}</tbody>
           </table>

@@ -176,6 +176,48 @@ def valuar_tenencias(df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     return df
 
 
+def agregar_pnl_real(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega columnas de P&L "real" ajustado por inflacion (CER):
+      - cer_factor: factor de ajuste desde fecha_compra hasta hoy
+      - costo_real_ars: costo nominal ajustado por inflacion
+      - pnl_real_ars: valor_actual_ars - costo_real_ars
+      - pnl_real_pct: pnl_real_ars / costo_real_ars * 100
+
+    Asume que df ya pasó por convertir_a(..., "ARS").
+    Solo aplica CER a tenencias compradas en pesos (moneda_compra == "ARS").
+    Para las compradas en USD, costo_real_ars = costo_ars (no se ajusta).
+    """
+    if df.empty or "costo_ars" not in df.columns:
+        return df
+
+    from core.inflation import cer_factor as _cer
+
+    df = df.copy()
+    factores = []
+    for _, r in df.iterrows():
+        fecha = r.get("fecha_compra")
+        moneda = r.get("moneda_compra", "ARS")
+        if moneda != "ARS" or pd.isna(fecha):
+            factores.append(1.0)
+            continue
+        try:
+            f = _cer(fecha)
+            factores.append(float(f) if f else 1.0)
+        except Exception:
+            factores.append(1.0)
+
+    df["cer_factor"]     = factores
+    df["costo_real_ars"] = df["costo_ars"] * df["cer_factor"]
+    df["pnl_real_ars"]   = df["valor_actual_ars"] - df["costo_real_ars"]
+    df["pnl_real_pct"]   = np.where(
+        df["costo_real_ars"] > 0,
+        df["pnl_real_ars"] / df["costo_real_ars"] * 100,
+        0.0,
+    )
+    return df
+
+
 def convertir_a(df: pd.DataFrame, moneda_destino: str = "ARS",
                 tipo_dolar: str = "mep") -> pd.DataFrame:
     """

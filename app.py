@@ -25,23 +25,36 @@ inject_css()
 # Inicializar DB (sin seed; el usuario arranca con cartera vacia)
 init_db(seed=False)
 
-# Encabezado
-st.markdown(
-    """
-    <div style="margin-bottom:.4rem;">
-      <div style="display:flex;align-items:center;gap:.6rem;">
-        <span style="font-size:1.7rem;">📊</span>
-        <span style="font-family:'Sora',sans-serif;font-weight:700;font-size:1.9rem;
-            background:linear-gradient(90deg,#e8edf5,#34d399);
-            -webkit-background-clip:text;-webkit-text-fill-color:transparent;">
-            TuPortafolioIA</span>
-      </div>
-      <p style="margin:.1rem 0 0;color:#8b96a8;font-size:.92rem;">
-        Terminal de portafolio · contexto argentino</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Encabezado + selector global de moneda
+col_h, col_ccy = st.columns([3, 1])
+with col_h:
+    st.markdown(
+        """
+        <div style="margin-bottom:.4rem;">
+          <div style="display:flex;align-items:center;gap:.6rem;">
+            <span style="font-size:1.7rem;">📊</span>
+            <span style="font-family:'Sora',sans-serif;font-weight:700;font-size:1.9rem;
+                background:linear-gradient(90deg,#e8edf5,#34d399);
+                -webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                TuPortafolioIA</span>
+          </div>
+          <p style="margin:.1rem 0 0;color:#8b96a8;font-size:.92rem;">
+            Terminal de portafolio · contexto argentino</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_ccy:
+    st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
+    ccy_labels = {"ARS": "ARS", "USD_MEP": "USD MEP", "USD_CCL": "USD CCL"}
+    ccy_choice = st.radio(
+        "Moneda", options=list(ccy_labels.keys()),
+        format_func=lambda k: ccy_labels[k],
+        horizontal=True, label_visibility="collapsed",
+        index=list(ccy_labels.keys()).index(
+            st.session_state.get("display_ccy", "ARS")),
+        key="display_ccy",
+    )
 
 # Navegacion horizontal estilo screenshot
 selected = option_menu(
