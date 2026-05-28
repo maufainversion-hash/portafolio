@@ -156,6 +156,43 @@ def get_fx_rate(tipo: str = "mep") -> Optional[float]:
     return d.get(tipo, {}).get("venta")
 
 
+# Mapeo casa interna -> nombre del endpoint en argentinadatos
+_HISTORIC_CASA = {
+    "oficial": "oficial",
+    "blue":    "blue",
+    "mep":     "bolsa",      # MEP en argentinadatos se llama "bolsa"
+    "bolsa":   "bolsa",
+    "ccl":     "contadoconliqui",
+    "contadoconliqui": "contadoconliqui",
+    "cripto":  "cripto",
+    "mayorista": "mayorista",
+}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_dolar_historic(casa: str = "mep") -> pd.DataFrame:
+    """
+    Serie historica diaria de una cotizacion de dolar via argentinadatos.
+    DataFrame con columnas [fecha, compra, venta]. Vacio si falla.
+    """
+    casa_api = _HISTORIC_CASA.get(casa.lower(), casa.lower())
+    try:
+        r = requests.get(
+            f"https://api.argentinadatos.com/v1/cotizaciones/dolares/{casa_api}",
+            timeout=15,
+        )
+        r.raise_for_status()
+        df = pd.DataFrame(r.json())
+        if df.empty:
+            return df
+        df["fecha"] = pd.to_datetime(df["fecha"])
+        df["compra"] = pd.to_numeric(df["compra"], errors="coerce")
+        df["venta"]  = pd.to_numeric(df["venta"], errors="coerce")
+        return df.sort_values("fecha").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
 # -----------------------------------------------------------------------------
 # RIESGO PAIS / INFLACION
 # -----------------------------------------------------------------------------

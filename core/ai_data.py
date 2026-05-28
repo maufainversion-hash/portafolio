@@ -26,7 +26,11 @@ from core.metrics import (
     returns_from_prices, volatility, sharpe, sortino, cagr,
     max_drawdown, var_historic,
 )
-from core.data import get_dolares, get_riesgo_pais, get_inflacion_mensual, get_merval
+from core.data import (
+    get_dolares, get_riesgo_pais, get_inflacion_mensual, get_merval,
+    get_dolar_historic, get_history,
+)
+from core.inflation import cer_factor
 
 
 def _safe(value, default=None):
@@ -211,4 +215,130 @@ def build_portfolio_context() -> dict:
 
     out["macro_ar"] = macro or None
 
+    # Benchmarks: retornos paralelos en el mismo periodo de la equity curve
+    if not curve.empty and len(curve) > 5:
+        out["benchmarks"] = _compute_benchmarks(curve)
+
     return out
+
+
+def _compute_benchmarks(curve: pd.Series) -> dict:
+    """
+    Calcula retornos de varios benchmarks en el mismo periodo que la equity curve.
+    Todos los retornos son TOTAL del periodo (no anualizados).
+
+    Devuelve:
+      - portfolio_pct
+      - merval_ars_pct
+      - spy_usd_pct
+      - spy_en_ars_pct (SPY convertido a pesos al MEP del dia)
+      - usd_mep_buyhold_pct
+      - inflacion_acumulada_pct
+      - ranking interpretativo (portfolio vs benchmarks)
+    """
+    fecha_desde = curve.index[0].date()
+    fecha_hasta = curve.index[-1].date()
+    dias = (fecha_hasta - fecha_desde).days
+    if dias <= 0:
+        return {}
+
+    p_ini = float(curve.iloc[0])
+    p_fin = float(curve.iloc[-1])
+    portfolio_pct = (p_fin / p_ini - 1) * 100
+
+    bm: dict = {
+        "periodo_desde": str(fecha_desde),
+        "periodo_hasta": str(fecha_hasta),
+        "dias_calendario": dias,
+        "portfolio_retorno_pct": _safe(round(portfolio_pct, 2)),
+        "comparativas": {},
+    }
+
+    # Merval (^MERV en pesos)
+    try:
+        merv = get_history("^MERV", period="1y")
+        if not merv.empty:
+            merv.index = pd.to_datetime(merv.index).tz_localize(None)
+            merv_filt = merv.loc[
+                (merv.index >= pd.Timestamp(fecha_desde)) &
+                (merv.index <= pd.Timestamp(fecha_hasta))
+            ]
+            if len(merv_filt) >= 2:
+                ret = (merv_filt["Close"].iloc[-1] /
+                       merv_filt["Close"].iloc[0] - 1) * 100
+                bm["comparativas"]["merval_ars_pct"] = _safe(round(float(ret), 2))
+    except Exception:
+        pass
+
+    # SPY en USD
+    spy_usd = None
+    spy_close_ini, spy_close_fin = None, None
+    try:
+        spy = get_history("SPY", period="1y")
+        if not spy.empty:
+            spy.index = pd.to_datetime(spy.index).tz_localize(None)
+            spy_filt = spy.loc[
+                (spy.index >= pd.Timestamp(fecha_desde)) &
+                (spy.index <= pd.Timestamp(fecha_hasta))
+            ]
+            if len(spy_filt) >= 2:
+                spy_close_ini = float(spy_filt["Close"].iloc[0])
+                spy_close_fin = float(spy_filt["Close"].iloc[-1])
+                spy_usd = (spy_close_fin / spy_close_ini - 1) * 100
+                bm["comparativas"]["spy_usd_pct"] = _safe(round(spy_usd, 2))
+    except Exception:
+        pass
+
+    # MEP historico (para USD buy&hold y para convertir SPY a pesos)
+    mep_ini, mep_fin = None, None
+    try:
+        mep = get_dolar_historic("mep")
+        if not mep.empty:
+            mep_filt = mep[(mep["fecha"] >= pd.Timestamp(fecha_desde)) &
+                           (mep["fecha"] <= pd.Timestamp(fecha_hasta))]
+            if len(mep_filt) >= 2:
+                mep_ini = float(mep_filt["venta"].iloc[0])
+                mep_fin = float(mep_filt["venta"].iloc[-1])
+                usd_buyhold = (mep_fin / mep_ini - 1) * 100
+                bm["comparativas"]["usd_mep_buyhold_pct"] = _safe(round(usd_buyhold, 2))
+    except Exception:
+        pass
+
+    # SPY convertido a pesos al MEP del dia
+    if spy_close_ini and spy_close_fin and mep_ini and mep_fin:
+        spy_ars_ini = spy_close_ini * mep_ini
+        spy_ars_fin = spy_close_fin * mep_fin
+        spy_ars_pct = (spy_ars_fin / spy_ars_ini - 1) * 100
+        bm["comparativas"]["spy_en_ars_pct"] = _safe(round(spy_ars_pct, 2))
+
+    # Inflacion acumulada en el periodo
+    try:
+        factor = cer_factor(fecha_desde, fecha_hasta)
+        if factor is not None:
+            inflacion_pct = (factor - 1) * 100
+            bm["comparativas"]["inflacion_acumulada_pct"] = _safe(round(inflacion_pct, 2))
+    except Exception:
+        pass
+
+    # Ranking: cuanto le saco / le perdio el portfolio a cada benchmark
+    comparativas = bm["comparativas"]
+    diferencias = {}
+    for k, v in comparativas.items():
+        if v is None or k == "spy_usd_pct":  # spy_usd no es comparable directo en pesos
+            continue
+        diferencias[k.replace("_pct", "_diff_pct")] = _safe(
+            round(portfolio_pct - v, 2))
+    bm["diferencia_vs_benchmark"] = diferencias
+
+    # Veredicto rapido
+    if diferencias:
+        gana = [k.replace("_diff_pct", "") for k, v in diferencias.items()
+                if v is not None and v > 0]
+        pierde = [k.replace("_diff_pct", "") for k, v in diferencias.items()
+                  if v is not None and v < 0]
+        bm["resumen_relativo"] = {
+            "le_gana_a": gana,
+            "pierde_contra": pierde,
+        }
+
+    return bm

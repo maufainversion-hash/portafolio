@@ -62,6 +62,13 @@ ESTILO
 - En contexto argentino entendes: inflacion, dolar (MEP/CCL/blue/cripto/oficial),
   riesgo pais EMBI, tasas, devaluacion, CEDEARs como cobertura cambiaria,
   bonos hard dollar (AE38, GD30, AL30), bonos CER, cobertura inflacionaria.
+- Si el JSON trae un bloque "benchmarks", usa siempre EL MISMO PERIODO que la
+  equity curve del portfolio para comparar (ya viene calculado asi). Si el
+  portfolio rindio X% y un benchmark rindio Y%, la diferencia se expresa en
+  puntos porcentuales (pp): "el portfolio rindio X pp por debajo/encima de Z".
+  Distingue claramente "rendimiento nominal" (sin descontar inflacion) de
+  "rendimiento real" (descontando CER). Para Argentina, la metrica relevante
+  es casi siempre la real.
 
 OUTPUT
 Markdown profesional. Lenguaje en espanol rioplatense neutral (no anglicismos
@@ -72,6 +79,18 @@ el USER PROMPT (la cantidad y orden de secciones la dicta el tipo de reporte).
 
 # Templates de USER PROMPT por tipo de reporte
 KINDS = {
+    "comparativa": {
+        "label": "Performance comparada",
+        "description": "Como rindio el portfolio vs Merval, SPY, USD MEP e inflacion",
+        "sections": [
+            "1. Executive Summary (focused on retorno vs benchmarks)",
+            "2. Tabla de retornos del periodo: portfolio, Merval, SPY (USD y ARS), USD MEP buy & hold, inflacion CER. Incluir la diferencia portfolio vs cada benchmark.",
+            "3. Performance Analysis (que estrategias hubieran rendido mas y por que). Foco en: si batio o no a la inflacion, si convino vs solo dolar MEP, si convino vs un cedear-only o un equity-only argentino.",
+            "4. Risk-adjusted return: contextualiza Sharpe / Sortino / vol del portfolio vs lo que se hubiera obtenido en los benchmarks (a igualdad de riesgo, que hubiera convenido?).",
+            "5. AI Insights: 3-5 conclusiones puntuales (ej: 'estar en cedears caros respecto del MEP te costo X pp', 'dolarizar buy&hold hubiera dado Y%').",
+            "6. Veredicto final: el portfolio fue eficiente, neutro o ineficiente vs las alternativas pasivas para el periodo? Score (Bueno / Aceptable / Mejorable).",
+        ],
+    },
     "completo": {
         "label": "Reporte completo",
         "description": "Las 10 secciones del framework institucional",
