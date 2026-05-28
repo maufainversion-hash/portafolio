@@ -10,6 +10,7 @@ from core.portfolio import (
     load_tenencias, valuar_tenencias, convertir_a, enriquecer_con_info,
     allocation_by,
 )
+from core.ui import style_fig
 
 
 def render():
@@ -62,12 +63,9 @@ def render():
         fig = px.sunburst(
             df_val, path=["tipo", "ticker"], values="valor_actual_ars",
             color="valor_actual_ars",
-            color_continuous_scale=["#0a0e1a", "#22c55e"],
+            color_continuous_scale=["#0a0e1a", "#34d399"],
         )
-        fig.update_layout(
-            height=480, margin=dict(l=0, r=0, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
+        style_fig(fig, height=480)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -79,12 +77,9 @@ def _treemap(df: pd.DataFrame, field: str, titulo: str):
     fig = px.treemap(
         agg, path=[field], values="valor_actual_ars",
         color="peso_pct",
-        color_continuous_scale=["#0a0e1a", "#22c55e"],
+        color_continuous_scale=["#0a0e1a", "#34d399"],
     )
-    fig.update_layout(
-        height=400, margin=dict(l=0, r=0, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    style_fig(fig, height=400)
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(
         agg.rename(columns={field: titulo,

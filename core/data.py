@@ -16,6 +16,22 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+# Session que impersona Chrome para sortear el bloqueo de Yahoo a IPs cloud.
+try:
+    from curl_cffi import requests as _cffi
+    _YF_SESSION = _cffi.Session(impersonate="chrome")
+except Exception:
+    _YF_SESSION = None
+
+def _yticker(tk: str):
+    """Devuelve un yf.Ticker usando la session impersonada si esta disponible."""
+    try:
+        if _YF_SESSION is not None:
+            return yf.Ticker(tk, session=_YF_SESSION)
+    except Exception:
+        pass
+    return yf.Ticker(tk)
+
 
 # -----------------------------------------------------------------------------
 # YFINANCE
@@ -24,7 +40,7 @@ import yfinance as yf
 def get_last_price(ticker: str) -> Optional[float]:
     """Ultimo precio de cierre disponible. None si falla."""
     try:
-        t = yf.Ticker(ticker)
+        t = _yticker(ticker)
         hist = t.history(period="5d", auto_adjust=False)
         if hist.empty:
             return None
@@ -37,7 +53,7 @@ def get_last_price(ticker: str) -> Optional[float]:
 def get_history(ticker: str, period: str = "6mo") -> pd.DataFrame:
     """Historico OHLC. DataFrame vacio si falla."""
     try:
-        t = yf.Ticker(ticker)
+        t = _yticker(ticker)
         df = t.history(period=period, auto_adjust=False)
         return df if df is not None else pd.DataFrame()
     except Exception:
@@ -48,7 +64,7 @@ def get_history(ticker: str, period: str = "6mo") -> pd.DataFrame:
 def get_info(ticker: str) -> dict:
     """Info fundamental (sector, country, etc). Dict vacio si falla."""
     try:
-        t = yf.Ticker(ticker)
+        t = _yticker(ticker)
         info = t.info or {}
         return info
     except Exception:

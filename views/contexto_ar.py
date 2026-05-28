@@ -10,6 +10,7 @@ from core.data import (
     get_dolares, get_riesgo_pais, get_inflacion_mensual,
     get_merval, get_history,
 )
+from core.ui import style_fig
 
 
 def render():
@@ -63,15 +64,11 @@ def render():
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=hist.index, y=hist["Close"], mode="lines",
-            line=dict(color="#22c55e", width=2),
-            fill="tozeroy", fillcolor="rgba(34,197,94,0.10)",
+            line=dict(color="#34d399", width=2),
+            fill="tozeroy", fillcolor="rgba(52,211,153,0.10)",
             name="Merval",
         ))
-        fig.update_layout(
-            height=300, margin=dict(l=10, r=10, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(gridcolor="#1f2937"), yaxis=dict(gridcolor="#1f2937"),
-        )
+        style_fig(fig, height=300)
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
@@ -88,10 +85,6 @@ def render():
             x=ultimos["fecha"], y=ultimos["valor"],
             marker_color="#f59e0b",
         ))
-        fig.update_layout(
-            height=320, margin=dict(l=10, r=10, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(gridcolor="#1f2937"),
-            yaxis=dict(gridcolor="#1f2937", title="% mensual"),
-        )
+        style_fig(fig, height=320)
+        fig.update_layout(yaxis=dict(title="% mensual"))
         st.plotly_chart(fig, use_container_width=True)

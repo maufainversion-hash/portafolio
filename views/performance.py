@@ -11,6 +11,7 @@ from core.portfolio import load_tenencias, equity_curve
 from core.metrics import (
     returns_from_prices, summary, rolling_sharpe, rolling_volatility,
 )
+from core.ui import style_fig
 
 
 PERIODOS = {
@@ -45,16 +46,12 @@ def render():
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=curve.index, y=curve.values, mode="lines",
-        line=dict(color="#22c55e", width=2),
-        fill="tozeroy", fillcolor="rgba(34,197,94,0.10)",
+        line=dict(color="#34d399", width=2),
+        fill="tozeroy", fillcolor="rgba(52,211,153,0.10)",
         name="Valor (ARS)",
     ))
-    fig.update_layout(
-        height=380, margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(gridcolor="#1f2937"), yaxis=dict(gridcolor="#1f2937"),
-        title=dict(text=f"Equity curve — {periodo_label}", font=dict(size=14)),
-    )
+    style_fig(fig, height=380)
+    fig.update_layout(title=dict(text=f"Equity curve — {periodo_label}", font=dict(size=14)))
     st.plotly_chart(fig, use_container_width=True)
 
     # Metricas
@@ -85,7 +82,7 @@ def render():
     with col_a:
         st.markdown("**Sharpe rolling 30d**")
         rs = rolling_sharpe(rets, window=30)
-        _line_chart(rs, "Sharpe 30d", color="#22c55e")
+        _line_chart(rs, "Sharpe 30d", color="#34d399")
     with col_b:
         st.markdown("**Volatilidad rolling 30d**")
         rv = rolling_volatility(rets, window=30) * 100
@@ -97,19 +94,15 @@ def render():
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=dd.index, y=dd.values, mode="lines",
-        line=dict(color="#ef4444", width=1.5),
-        fill="tozeroy", fillcolor="rgba(239,68,68,0.15)",
+        line=dict(color="#fb7185", width=1.5),
+        fill="tozeroy", fillcolor="rgba(251,113,133,0.15)",
     ))
-    fig.update_layout(
-        height=240, margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(gridcolor="#1f2937"),
-        yaxis=dict(gridcolor="#1f2937", title="Drawdown (%)"),
-    )
+    style_fig(fig, height=240)
+    fig.update_layout(yaxis=dict(title="Drawdown (%)"))
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _line_chart(s: pd.Series, name: str, color: str = "#22c55e"):
+def _line_chart(s: pd.Series, name: str, color: str = "#34d399"):
     if s is None or s.empty:
         st.info("Sin datos.")
         return
@@ -118,9 +111,5 @@ def _line_chart(s: pd.Series, name: str, color: str = "#22c55e"):
         x=s.index, y=s.values, mode="lines",
         line=dict(color=color, width=1.5), name=name,
     ))
-    fig.update_layout(
-        height=240, margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(gridcolor="#1f2937"), yaxis=dict(gridcolor="#1f2937"),
-    )
+    style_fig(fig, height=240)
     st.plotly_chart(fig, use_container_width=True)

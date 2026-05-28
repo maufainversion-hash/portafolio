@@ -13,6 +13,7 @@ from core.portfolio import (
     add_tenencia, delete_tenencia,
 )
 from core.data import get_dolares
+from core.ui import fmt_money, fmt_pct, kpi_card, kpi_row, style_fig
 
 
 def _fmt_money(v: float, simbolo: str = "$") -> str:
@@ -41,18 +42,31 @@ def render():
         df_val = convertir_a(df_val, "ARS", tipo_dolar="mep")
         df_val = convertir_a(df_val, "USD", tipo_dolar="mep")
 
-    valor_ars = df_val["valor_actual_ars"].sum()
-    valor_usd = df_val["valor_actual_usd"].sum()
-    costo_ars = df_val["costo_ars"].sum()
+    # P&L se calcula SOLO sobre posiciones con precio valido,
+    # para no contar como perdida total las que no se pudieron valuar.
+    validos = df_val[df_val["precio_actual"].notna()].copy()
+    sin_precio = len(df_val) - len(validos)
+
+    valor_ars = validos["valor_actual_ars"].sum()
+    valor_usd = validos["valor_actual_usd"].sum()
+    costo_ars = validos["costo_ars"].sum()
     pnl_ars   = valor_ars - costo_ars
     pnl_pct   = (pnl_ars / costo_ars * 100) if costo_ars else 0
 
-    # KPIs
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Valor total (ARS)", _fmt_money(valor_ars, "$"))
-    c2.metric("Valor total (USD MEP)", _fmt_money(valor_usd, "US$"))
-    c3.metric("P&L total (ARS)", _fmt_money(pnl_ars, "$"), _fmt_pct(pnl_pct))
-    c4.metric("Posiciones", f"{len(df_val)}")
+    if sin_precio > 0:
+        st.warning(
+            f"⚠️ {sin_precio} de {len(df_val)} posiciones sin precio actual "
+            "(Yahoo puede estar limitando el acceso). El P&L se calcula sobre las valuadas."
+        )
+
+    # KPIs premium (HTML cards)
+    kpi_row([
+        kpi_card("Valor total (ARS)", fmt_money(valor_ars, "$")),
+        kpi_card("Valor total (USD MEP)", fmt_money(valor_usd, "US$")),
+        kpi_card("P&L total (ARS)", fmt_money(pnl_ars, "$"),
+                 delta=fmt_pct(pnl_pct), positive=(pnl_ars >= 0)),
+        kpi_card("Posiciones valuadas", f"{len(validos)} / {len(df_val)}"),
+    ])
 
     st.divider()
 
@@ -72,50 +86,46 @@ def render():
                 fill="tozeroy", fillcolor="rgba(34,197,94,0.10)",
                 name="Valor",
             ))
-            fig.update_layout(
-                height=320, margin=dict(l=10, r=10, t=10, b=10),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                xaxis=dict(gridcolor="#1f2937"), yaxis=dict(gridcolor="#1f2937"),
-            )
+            style_fig(fig, height=320)
             st.plotly_chart(fig, use_container_width=True)
 
     with col_donut:
         st.markdown("**Allocation por tipo**")
         agg = df_val.groupby("tipo")["valor_actual_ars"].sum().reset_index()
         if not agg.empty and agg["valor_actual_ars"].sum() > 0:
-            fig = px.pie(agg, names="tipo", values="valor_actual_ars",
-                         hole=0.55, color_discrete_sequence=px.colors.sequential.Greens_r)
-            fig.update_layout(
-                height=320, margin=dict(l=10, r=10, t=10, b=10),
-                showlegend=True, legend=dict(orientation="h", y=-0.05),
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
+            fig = px.pie(agg, names="tipo", values="valor_actual_ars", hole=0.62,
+                         color_discrete_sequence=["#34d399","#2dd4bf","#22d3ee","#60a5fa","#a78bfa","#f472b6","#fbbf24"])
+            fig.update_traces(textposition="outside", textinfo="percent")
+            style_fig(fig, height=320)
+            fig.update_layout(showlegend=True, legend=dict(orientation="h", y=-0.08))
             st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # Tabla de posiciones
+    # Tabla de posiciones custom (HTML premium)
     st.markdown("**Posiciones**")
-    cols_show = [
-        "ticker", "tipo", "cantidad", "precio_compra", "precio_actual",
-        "valor_actual_ars", "pnl_ars", "pnl_pct",
-    ]
-    tabla = df_val[cols_show].copy()
-    tabla = tabla.rename(columns={
-        "ticker": "Ticker", "tipo": "Tipo", "cantidad": "Cant.",
-        "precio_compra": "P. compra", "precio_actual": "P. actual",
-        "valor_actual_ars": "Valor (ARS)", "pnl_ars": "P&L (ARS)", "pnl_pct": "P&L %",
-    })
-    st.dataframe(
-        tabla,
-        use_container_width=True, hide_index=True,
-        column_config={
-            "P. compra":   st.column_config.NumberColumn(format="%.2f"),
-            "P. actual":   st.column_config.NumberColumn(format="%.2f"),
-            "Valor (ARS)": st.column_config.NumberColumn(format="$ %.2f"),
-            "P&L (ARS)":   st.column_config.NumberColumn(format="$ %.2f"),
-            "P&L %":       st.column_config.NumberColumn(format="%.2f%%"),
-        },
+    filas = ""
+    for _, r in df_val.iterrows():
+        pnl = r.get("pnl_ars")
+        pnl_p = r.get("pnl_pct")
+        cls = "pnl-pos" if (pd.notna(pnl) and pnl >= 0) else "pnl-neg"
+        filas += (
+            "<tr>"
+            f"<td><span class='tk-badge'>{r['ticker']}</span>"
+            f"<span class='tk-tipo'>{r['tipo']}</span></td>"
+            f"<td>{r['cantidad']:.4f}</td>"
+            f"<td>{fmt_money(r.get('precio_actual'))}</td>"
+            f"<td>{fmt_money(r.get('valor_actual_ars'))}</td>"
+            f"<td class='{cls}'>{fmt_money(pnl)}</td>"
+            f"<td class='{cls}'>{fmt_pct(pnl_p)}</td>"
+            "</tr>"
+        )
+    st.markdown(
+        "<table class='pos-table'><thead><tr>"
+        "<th>Activo</th><th>Cantidad</th><th>P. actual</th>"
+        "<th>Valor (ARS)</th><th>P&L (ARS)</th><th>P&L %</th>"
+        "</tr></thead><tbody>" + filas + "</tbody></table>",
+        unsafe_allow_html=True,
     )
 
     # Eliminar tenencia
