@@ -81,13 +81,27 @@ def get_history(ticker: str, period: str = "6mo") -> pd.DataFrame:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_info(ticker: str) -> dict:
-    """Info fundamental (sector, country, etc). Dict vacio si falla."""
-    try:
-        t = _yticker(ticker)
-        info = t.info or {}
-        return info
-    except Exception:
-        return {}
+    """
+    Info fundamental (sector, country, etc).
+    Para tickers BYMA con sufijo .BA o cedears sin sufijo (MELI, AAPL...),
+    yfinance.info muchas veces vuelve vacio. Probamos primero el ticker como
+    viene; si no trae sector/country, reintentamos con el underlying en US.
+    """
+    candidatos = [ticker]
+    # Strip .BA y probar tambien el underlying
+    if isinstance(ticker, str):
+        up = ticker.upper()
+        if up.endswith(".BA"):
+            candidatos.append(up[:-3])
+    for tk in candidatos:
+        try:
+            t = _yticker(tk)
+            info = t.info or {}
+            if info.get("sector") or info.get("country") or info.get("longName"):
+                return info
+        except Exception:
+            continue
+    return {}
 
 
 # -----------------------------------------------------------------------------
@@ -96,9 +110,14 @@ def get_info(ticker: str) -> dict:
 @st.cache_data(ttl=600, show_spinner=False)
 def get_dolares() -> dict:
     """
-    Devuelve dict con cotizaciones oficiales, MEP, CCL, blue, cripto.
+    Devuelve dict con cotizaciones oficiales, MEP, CCL, blue, cripto, mayorista, tarjeta.
     Estructura: {'oficial': {'compra': X, 'venta': Y}, 'mep': {...}, ...}
+
+    Nota: dolarapi llama "bolsa" al MEP; aca lo exponemos como 'mep' (y mantenemos
+    'bolsa' como alias para no romper consumidores).
     """
+    # alias casa-de-dolarapi -> claves internas usadas en la app
+    ALIAS = {"bolsa": "mep"}
     try:
         r = requests.get("https://dolarapi.com/v1/dolares", timeout=10)
         r.raise_for_status()
@@ -106,12 +125,15 @@ def get_dolares() -> dict:
         out = {}
         for item in data:
             casa = item.get("casa", "").lower()
-            out[casa] = {
+            entry = {
                 "compra": item.get("compra"),
                 "venta":  item.get("venta"),
                 "fecha":  item.get("fechaActualizacion"),
                 "nombre": item.get("nombre"),
             }
+            out[casa] = entry
+            if casa in ALIAS:
+                out[ALIAS[casa]] = entry
         return out
     except Exception:
         return {}
