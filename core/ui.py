@@ -45,7 +45,13 @@ def inject_css():
         .kpi-label{ font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
             color:var(--dim); margin-bottom:.55rem; font-weight:600; }
         .kpi-value{ font-family:'Sora',sans-serif; font-weight:700; font-size:1.7rem;
-            color:var(--text); font-variant-numeric:tabular-nums; line-height:1.1; }
+            color:var(--text); font-variant-numeric:tabular-nums; line-height:1.1;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        /* Grids con muchas columnas: achicar el valor para que no se corte */
+        .kpi-grid[style*="repeat(6"] .kpi-value,
+        .kpi-grid[style*="repeat(5"] .kpi-value{ font-size:1.25rem; }
+        .kpi-grid[style*="repeat(6"] .kpi,
+        .kpi-grid[style*="repeat(5"] .kpi{ padding:.9rem 1rem; }
         .kpi-delta{ margin-top:.5rem; display:inline-flex; align-items:center; gap:.3rem;
             font-size:.85rem; font-weight:600; padding:.15rem .5rem; border-radius:999px;
             font-variant-numeric:tabular-nums; }
