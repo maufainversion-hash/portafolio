@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+ENV/
+.env
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# SQLite local
+data/*.db
+data/*.db-journal
+data/*.csv
+!data/.gitkeep
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Distribution
+build/
+dist/
+*.egg
