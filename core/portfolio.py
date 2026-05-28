@@ -303,7 +303,7 @@ def equity_curve(df: pd.DataFrame, period: str = "6mo") -> pd.Series:
 
     total: Optional[pd.Series] = None
     for _, row in df.iterrows():
-        hist = get_history(row["ticker"], period=period)
+        hist = get_history(row["ticker"], period=period, tipo=row["tipo"])
         if hist.empty:
             continue
         precios = hist["Close"].copy()

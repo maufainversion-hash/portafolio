@@ -69,12 +69,23 @@ def get_last_price(ticker: str, tipo: Optional[str] = None) -> Optional[float]:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def get_history(ticker: str, period: str = "6mo") -> pd.DataFrame:
-    """Historico OHLC. DataFrame vacio si falla."""
+def get_history(ticker: str, period: str = "6mo",
+                tipo: Optional[str] = None) -> pd.DataFrame:
+    """
+    Historico OHLC desde yfinance. DataFrame vacio si falla.
+    Para tipos argentinos sin sufijo .BA, probamos agregando .BA porque
+    asi es como cotizan en Yahoo (TXAR -> TXAR.BA).
+    """
+    candidatos = [ticker]
+    if tipo in _TIPOS_AR and isinstance(ticker, str) and not ticker.upper().endswith(".BA"):
+        candidatos.insert(0, f"{ticker}.BA")
     try:
-        t = _yticker(ticker)
-        df = t.history(period=period, auto_adjust=False)
-        return df if df is not None else pd.DataFrame()
+        for tk in candidatos:
+            t = _yticker(tk)
+            df = t.history(period=period, auto_adjust=False)
+            if df is not None and not df.empty:
+                return df
+        return pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 

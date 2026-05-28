@@ -11,6 +11,7 @@ from core.portfolio import (
     load_tenencias, valuar_tenencias, convertir_a, equity_curve,
     agregar_pnl_real,
 )
+from core.metrics import returns_from_prices, volatility
 from core.ui import fmt_money, fmt_pct, kpi_card, kpi_row, style_fig
 from core.currency import (
     fmt_display, convert_ars, display_label, display_symbol,
@@ -30,6 +31,7 @@ def render():
         df_val = convertir_a(df_val, "ARS", tipo_dolar="mep")
         df_val = convertir_a(df_val, "USD", tipo_dolar="mep")
         df_val = agregar_pnl_real(df_val)
+        curve = equity_curve(df, period="6mo")
 
     # P&L se calcula SOLO sobre posiciones con precio valido,
     # para no contar como perdida total las que no se pudieron valuar.
@@ -47,13 +49,20 @@ def render():
     pnl_real_ars   = valor_ars - costo_real_ars
     pnl_real_pct   = (pnl_real_ars / costo_real_ars * 100) if costo_real_ars else 0
 
+    # Volatilidad anualizada (a partir de la equity curve en pesos)
+    vol_anual = None
+    if not curve.empty and len(curve) > 5:
+        rets = returns_from_prices(curve)
+        if not rets.empty:
+            vol_anual = volatility(rets, annualize=True) * 100
+
     if sin_precio > 0:
         st.warning(
             f"⚠️ {sin_precio} de {len(df_val)} posiciones sin precio actual "
             "(Yahoo puede estar limitando el acceso). El P&L se calcula sobre las valuadas."
         )
 
-    # KPIs premium (HTML cards) — todo en la moneda de display elegida
+    # Fila 1: valor + P&L
     ccy = display_label()
     kpi_row([
         kpi_card(f"Valor total ({ccy})", fmt_display(valor_ars)),
@@ -64,14 +73,24 @@ def render():
         kpi_card("Posiciones valuadas", f"{len(validos)} / {len(df_val)}"),
     ])
 
+    # Fila 2: rendimientos
+    kpi_row([
+        kpi_card("Rendimiento", fmt_pct(pnl_pct),
+                 delta=None, positive=(pnl_pct >= 0)),
+        kpi_card("Volatilidad anual",
+                 f"{vol_anual:.2f}%" if vol_anual is not None else "—"),
+        kpi_card("Rendimiento real (CER)", fmt_pct(pnl_real_pct),
+                 delta=None, positive=(pnl_real_pct >= 0)),
+        kpi_card("Periodo equity",
+                 f"{len(curve)} dias" if not curve.empty else "—"),
+    ])
+
     st.divider()
 
     # Equity curve + Donut
     col_chart, col_donut = st.columns([2, 1])
     with col_chart:
         st.markdown(f"**Equity curve (6 meses, {ccy})**")
-        with st.spinner("Calculando equity curve..."):
-            curve = equity_curve(df, period="6mo")
         if curve.empty:
             st.warning("No se pudo calcular la equity curve (sin datos historicos).")
         else:
