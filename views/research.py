@@ -15,6 +15,7 @@ from core.ai import (
     has_api_key, generate_report_stream,
 )
 from core.ai_data import build_portfolio_context
+from core.pdf import markdown_to_pdf
 
 
 def render():
@@ -133,22 +134,41 @@ def _generar(kind: str, modelo: str):
     # Persistimos solo reportes validos
     st.session_state["ai_last_report"] = buffer
     st.session_state["ai_last_kind_label"] = KINDS[kind]["label"]
+    st.session_state["ai_last_kind_key"]   = kind
     st.session_state["ai_last_modelo"] = modelo
 
-    st.download_button(
-        "⬇ Descargar reporte (Markdown)",
-        data=buffer,
-        file_name=f"reporte_{kind}.md",
-        mime="text/markdown",
-    )
+    _download_buttons(buffer, KINDS[kind]["label"], kind)
 
 
 def _render_report(md: str):
     """Render premium del markdown del reporte."""
     st.markdown(md)
-    st.download_button(
-        "⬇ Descargar reporte (Markdown)",
-        data=md,
-        file_name="reporte.md",
-        mime="text/markdown",
-    )
+    kind_key = st.session_state.get("ai_last_kind_key", "reporte")
+    kind_label = st.session_state.get("ai_last_kind_label", "Reporte")
+    _download_buttons(md, kind_label, kind_key)
+
+
+def _download_buttons(md_text: str, titulo: str, kind: str):
+    """Botones de descarga: PDF (principal) + Markdown (secundario)."""
+    col_pdf, col_md = st.columns([1, 1])
+    with col_pdf:
+        try:
+            pdf_bytes = markdown_to_pdf(md_text, titulo=titulo)
+            st.download_button(
+                "⬇ Descargar reporte (PDF)",
+                data=pdf_bytes,
+                file_name=f"reporte_{kind}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary",
+            )
+        except Exception as e:
+            st.error(f"No se pudo generar el PDF: {e}")
+    with col_md:
+        st.download_button(
+            "⬇ Descargar Markdown",
+            data=md_text,
+            file_name=f"reporte_{kind}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
