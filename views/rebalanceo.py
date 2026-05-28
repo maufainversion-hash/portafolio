@@ -110,30 +110,54 @@ def render():
         if preset == "Equal weight":
             base = 100.0 / len(tipos_presentes)
             for t in tipos_presentes:
-                st.session_state[f"reb_obj_{t}"] = round(base, 1)
+                st.session_state[f"reb_obj_{t}"] = round(base, 2)
         else:
-            for t in tipos_presentes:
-                st.session_state[f"reb_obj_{t}"] = float(PRESETS[preset].get(t, 0))
+            # Tomamos solo los pesos del preset que corresponden a tipos presentes
+            # en la cartera, y los re-normalizamos para que sumen 100%.
+            crudos = {t: float(PRESETS[preset].get(t, 0)) for t in tipos_presentes}
+            total_crudo = sum(crudos.values())
+            if total_crudo > 0:
+                escala = 100.0 / total_crudo
+                for t, v in crudos.items():
+                    st.session_state[f"reb_obj_{t}"] = round(v * escala, 2)
+            else:
+                # Preset no cubre ningun tipo presente -> equal weight de fallback
+                base = 100.0 / len(tipos_presentes)
+                for t in tipos_presentes:
+                    st.session_state[f"reb_obj_{t}"] = round(base, 2)
         st.rerun()
 
-    # Render de sliders SOLO con key (sin value=, para evitar conflicto)
+    # Render de inputs numericos (NO sliders, para que se pueda tipear)
     objetivos = {}
     cols = st.columns(min(len(tipos_presentes), 4))
     for i, tipo in enumerate(tipos_presentes):
         label, icon = _TIPO_META.get(tipo, (tipo, "•"))
         with cols[i % len(cols)]:
-            objetivos[tipo] = st.slider(
-                f"{icon} {label}", 0.0, 100.0,
-                step=0.5, key=f"reb_obj_{tipo}",
-                format="%.1f%%",
+            objetivos[tipo] = st.number_input(
+                f"{icon} {label} (%)",
+                min_value=0.0, max_value=100.0,
+                step=0.5, format="%.2f",
+                key=f"reb_obj_{tipo}",
             )
 
     suma = sum(objetivos.values())
     if abs(suma - 100) > 0.5:
-        st.warning(f"⚠️ Los pesos objetivo suman **{suma:.1f}%**. Ajustalos para que totalicen 100%.")
+        gap = 100 - suma
+        st.warning(f"⚠️ Los pesos objetivo suman **{suma:.2f}%** "
+                   f"({'faltan' if gap > 0 else 'sobran'} **{abs(gap):.2f}%**). "
+                   "Ajustalos para que totalicen 100%.")
+        col_a, col_b = st.columns([1, 4])
+        with col_a:
+            if st.button("⚡ Normalizar a 100%", use_container_width=True):
+                if suma > 0:
+                    escala = 100.0 / suma
+                    for t in tipos_presentes:
+                        st.session_state[f"reb_obj_{t}"] = round(
+                            objetivos[t] * escala, 2)
+                    st.rerun()
         return
     else:
-        st.success(f"✔ Pesos objetivo: {suma:.1f}%")
+        st.success(f"✔ Pesos objetivo: {suma:.2f}%")
 
     # ---------- Bloque 2: Tabla comparativa con sugerencias ----------
     st.markdown("### 📊 Plan de rebalanceo")
