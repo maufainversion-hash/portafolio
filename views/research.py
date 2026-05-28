@@ -16,6 +16,7 @@ from core.ai import (
 )
 from core.ai_data import build_portfolio_context
 from core.pdf import markdown_to_pdf
+from core.pdf_charts import build_all_charts
 
 
 def render():
@@ -153,11 +154,19 @@ def _render_report(md: str):
 
 
 def _download_buttons(md_text: str, titulo: str, kind: str):
-    """Botones de descarga: PDF (principal) + Markdown (secundario)."""
+    """Botones de descarga: PDF enriquecido (principal) + Markdown (secundario)."""
     col_pdf, col_md = st.columns([1, 1])
     with col_pdf:
         try:
-            pdf_bytes = markdown_to_pdf(md_text, titulo=titulo)
+            # Re-construir contexto y charts para el PDF (rapido por cache)
+            with st.spinner("Armando PDF con gráficos..."):
+                ctx = build_portfolio_context()
+                charts = build_all_charts(ctx)
+                pdf_bytes = markdown_to_pdf(
+                    md_text, titulo=titulo,
+                    context=ctx, charts=charts,
+                    cliente_friendly=True,
+                )
             st.download_button(
                 "⬇ Descargar reporte (PDF)",
                 data=pdf_bytes,
