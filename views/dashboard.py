@@ -33,8 +33,8 @@ def render():
 
     df = load_tenencias()
     if df.empty:
-        st.info("No tenes tenencias cargadas. Agrega una desde el formulario lateral.")
-        _formulario_alta()
+        st.info("No tenes tenencias cargadas. Agrega una desde el formulario de abajo.")
+        _formulario_alta(expanded=True)
         return
 
     with st.spinner("Trayendo precios..."):
@@ -143,18 +143,20 @@ def render():
     _formulario_alta()
 
 
-def _formulario_alta():
-    with st.sidebar:
-        st.markdown("### Agregar tenencia")
+def _formulario_alta(expanded: bool = False):
+    with st.expander("➕ Agregar tenencia", expanded=expanded):
         with st.form("alta_tenencia", clear_on_submit=True):
-            ticker = st.text_input("Ticker (ej: GGAL.BA, AAPL, BTC-USD)").strip()
-            tipo = st.selectbox("Tipo", options=[
-                "accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto",
-            ])
-            cantidad = st.number_input("Cantidad", min_value=0.0, value=1.0, step=1.0, format="%.6f")
-            precio = st.number_input("Precio de compra", min_value=0.0, value=0.0, format="%.2f")
-            moneda = st.selectbox("Moneda compra", options=["ARS", "USD"])
-            fecha = st.date_input("Fecha de compra", value=date.today())
+            c1, c2 = st.columns(2)
+            with c1:
+                ticker = st.text_input("Ticker (ej: GGAL.BA, AAPL, BTC-USD)").strip()
+                tipo = st.selectbox("Tipo", options=[
+                    "accion_ar", "cedear", "accion_us", "etf", "bono", "fci", "cripto",
+                ])
+                cantidad = st.number_input("Cantidad", min_value=0.0, value=1.0, step=1.0, format="%.6f")
+            with c2:
+                precio = st.number_input("Precio de compra", min_value=0.0, value=0.0, format="%.2f")
+                moneda = st.selectbox("Moneda compra", options=["ARS", "USD"])
+                fecha = st.date_input("Fecha de compra", value=date.today())
             ok = st.form_submit_button("Agregar", type="primary", use_container_width=True)
             if ok:
                 if not ticker or cantidad <= 0 or precio <= 0:
