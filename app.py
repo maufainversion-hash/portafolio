@@ -6,7 +6,13 @@ y ruteo manual a cada vista.
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from core.db import init_db
+from core.db import (
+    init_db, list_portfolios, create_portfolio, rename_portfolio,
+    delete_portfolio,
+)
+from core.active_portfolio import (
+    get_active_portfolio_id, set_active_portfolio, get_active_portfolio_info,
+)
 from core.ui import inject_css
 from views import (
     dashboard, cartera, allocation, performance, rebalanceo, contexto_ar,
@@ -26,8 +32,8 @@ inject_css()
 # Inicializar DB (sin seed; el usuario arranca con cartera vacia)
 init_db(seed=False)
 
-# Encabezado + selector global de moneda
-col_h, col_ccy = st.columns([3, 1])
+# Encabezado + selectores globales (portfolio + moneda)
+col_h, col_pf, col_ccy = st.columns([3, 2, 1])
 with col_h:
     st.markdown(
         """
@@ -45,6 +51,91 @@ with col_h:
         """,
         unsafe_allow_html=True,
     )
+
+# Selector de portfolio activo + popover para CRUD
+with col_pf:
+    st.markdown("<div style='height:.4rem;'></div>", unsafe_allow_html=True)
+    portfolios = list_portfolios()
+    if not portfolios:
+        st.warning("Sin portfolios. Crea uno desde el botón ⚙ →")
+        ids, labels = [], []
+    else:
+        ids = [p["id"] for p in portfolios]
+        labels = [
+            (f"{p['nombre']} · {p['cliente']}" if p['cliente']
+             else p['nombre']) + f"  ({p['n_tenencias']})"
+            for p in portfolios
+        ]
+    active_id = get_active_portfolio_id()
+    sel_col, btn_col = st.columns([4, 1])
+    with sel_col:
+        if ids:
+            try:
+                idx = ids.index(active_id) if active_id in ids else 0
+            except ValueError:
+                idx = 0
+            chosen = st.selectbox(
+                "Portfolio activo", options=ids,
+                format_func=lambda i: labels[ids.index(i)],
+                index=idx,
+                label_visibility="collapsed",
+                key="active_portfolio_selector",
+            )
+            if chosen != active_id:
+                set_active_portfolio(chosen)
+                st.rerun()
+    with btn_col:
+        with st.popover("⚙", use_container_width=True):
+            st.markdown("**Gestionar clientes / portfolios**")
+            info = get_active_portfolio_info()
+
+            # Crear nuevo
+            with st.form("nuevo_pf", clear_on_submit=True):
+                st.markdown("*Crear nuevo*")
+                nombre_n = st.text_input("Nombre", placeholder="Ej: Juan Perez")
+                cliente_n = st.text_input("Cliente (opcional)",
+                                          placeholder="Nombre del titular")
+                notas_n = st.text_input("Notas (opcional)")
+                if st.form_submit_button("Crear", type="primary",
+                                         use_container_width=True):
+                    try:
+                        new_id = create_portfolio(nombre_n, cliente_n, notas_n)
+                        set_active_portfolio(new_id)
+                        st.success(f"Portfolio '{nombre_n}' creado.")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+
+            if info:
+                st.divider()
+                st.markdown(f"*Editar el activo: **{info['nombre']}***")
+                with st.form("editar_pf"):
+                    nombre_e = st.text_input("Nombre", value=info["nombre"])
+                    cliente_e = st.text_input("Cliente", value=info["cliente"] or "")
+                    notas_e = st.text_input("Notas", value=info["notas"] or "")
+                    ce, cb = st.columns(2)
+                    with ce:
+                        if st.form_submit_button("Guardar",
+                                                 use_container_width=True):
+                            try:
+                                rename_portfolio(info["id"], nombre_e,
+                                                 cliente_e, notas_e)
+                                st.success("Actualizado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+                    with cb:
+                        if st.form_submit_button("🗑 Eliminar este",
+                                                 use_container_width=True,
+                                                 help="Borra el portfolio y todas sus tenencias"):
+                            try:
+                                delete_portfolio(info["id"])
+                                st.session_state["active_portfolio_id"] = None
+                                st.success("Eliminado.")
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e))
+
 with col_ccy:
     st.markdown("<div style='height:.6rem;'></div>", unsafe_allow_html=True)
     ccy_labels = {"ARS": "ARS", "USD_MEP": "USD MEP", "USD_CCL": "USD CCL"}

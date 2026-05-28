@@ -31,6 +31,7 @@ from core.data import (
     get_dolar_historic, get_history,
 )
 from core.inflation import cer_factor
+from core.active_portfolio import get_active_portfolio_info
 
 
 def _safe(value, default=None):
@@ -52,8 +53,14 @@ def build_portfolio_context() -> dict:
     Construye el JSON de contexto completo. Si hay algo que falla, se devuelve
     null en ese campo (no lanzamos excepcion para que el LLM siga andando).
     """
+    pf_info = get_active_portfolio_info() or {}
     out: dict = {
         "generated_at": str(date.today()),
+        "portfolio_meta": {
+            "nombre": pf_info.get("nombre", "Portafolio"),
+            "cliente": pf_info.get("cliente"),
+            "notas": pf_info.get("notas"),
+        },
         "portfolio": None,
         "positions": [],
         "metrics": None,

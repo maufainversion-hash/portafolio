@@ -19,8 +19,12 @@ from core.pdf import markdown_to_pdf
 
 
 def render():
+    from core.active_portfolio import get_active_portfolio_label
     st.subheader("Research IA")
-    st.caption("Reportes institucionales sobre tu portafolio generados con Google Gemini.")
+    st.caption(
+        f"Reporte sobre: **{get_active_portfolio_label()}** · "
+        "Cambia el portfolio desde el selector arriba a la derecha."
+    )
 
     _bloque_api_key()
 

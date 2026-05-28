@@ -45,7 +45,12 @@ EJEMPLOS = {
 
 
 def render():
+    from core.active_portfolio import get_active_portfolio_label
     st.subheader("Cartera")
+    st.caption(
+        f"Editando: **{get_active_portfolio_label()}** · "
+        "Cambia el portfolio desde el selector en la esquina superior derecha."
+    )
 
     _alta()
     st.divider()

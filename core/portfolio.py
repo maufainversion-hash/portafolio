@@ -18,10 +18,25 @@ from core.data import get_last_price, get_history, get_dolares, get_info, get_do
 # -----------------------------------------------------------------------------
 # CARGA
 # -----------------------------------------------------------------------------
-def load_tenencias() -> pd.DataFrame:
-    """Devuelve un DataFrame con todas las tenencias. Vacio si no hay."""
+def _resolve_pid(portfolio_id: Optional[int] = None) -> Optional[int]:
+    """Devuelve el portfolio_id explicito o el activo de session_state."""
+    if portfolio_id is not None:
+        return portfolio_id
+    try:
+        from core.active_portfolio import get_active_portfolio_id
+        return get_active_portfolio_id()
+    except Exception:
+        return None
+
+
+def load_tenencias(portfolio_id: Optional[int] = None) -> pd.DataFrame:
+    """Devuelve las tenencias del portfolio activo (o explicito). Vacio si no hay."""
+    pid = _resolve_pid(portfolio_id)
     with get_session() as s:
-        rows = s.query(Tenencia).all()
+        q = s.query(Tenencia)
+        if pid is not None:
+            q = q.filter(Tenencia.portfolio_id == pid)
+        rows = q.all()
         if not rows:
             return pd.DataFrame(columns=[
                 "id", "ticker", "tipo", "cantidad", "precio_compra",
@@ -40,9 +55,12 @@ def load_tenencias() -> pd.DataFrame:
 
 
 def add_tenencia(ticker: str, tipo: str, cantidad: float, precio_compra: float,
-                 moneda_compra: str, fecha_compra) -> int:
+                 moneda_compra: str, fecha_compra,
+                 portfolio_id: Optional[int] = None) -> int:
+    pid = _resolve_pid(portfolio_id)
     with get_session() as s:
         t = Tenencia(
+            portfolio_id=pid,
             ticker=ticker.upper().strip(),
             tipo=tipo,
             cantidad=float(cantidad),
@@ -63,10 +81,14 @@ def delete_tenencia(id_: int) -> None:
             s.commit()
 
 
-def delete_all_tenencias() -> int:
-    """Borra todas las tenencias. Devuelve cuantas habia."""
+def delete_all_tenencias(portfolio_id: Optional[int] = None) -> int:
+    """Borra todas las tenencias del portfolio activo. Devuelve cuantas habia."""
+    pid = _resolve_pid(portfolio_id)
     with get_session() as s:
-        n = s.query(Tenencia).delete()
+        q = s.query(Tenencia)
+        if pid is not None:
+            q = q.filter(Tenencia.portfolio_id == pid)
+        n = q.delete()
         s.commit()
         return n
 
@@ -113,12 +135,14 @@ def parse_csv_tenencias(df_csv: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return df, errores
 
 
-def bulk_add_tenencias(df: pd.DataFrame) -> int:
-    """Inserta varias tenencias. Devuelve cuantas inserto."""
+def bulk_add_tenencias(df: pd.DataFrame, portfolio_id: Optional[int] = None) -> int:
+    """Inserta varias tenencias en el portfolio activo (o explicito)."""
+    pid = _resolve_pid(portfolio_id)
     n = 0
     with get_session() as s:
         for _, r in df.iterrows():
             s.add(Tenencia(
+                portfolio_id=pid,
                 ticker=r["ticker"],
                 tipo=r["tipo"],
                 cantidad=float(r["cantidad"]),
