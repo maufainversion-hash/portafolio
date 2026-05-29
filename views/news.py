@@ -221,7 +221,7 @@ def _render_news_grid(items: list):
 
     st.caption(f"{len(filtered)} de {len(items)} headlines")
 
-    # CSS de las cards
+    # CSS de las cards (una sola vez por render)
     st.markdown("""
     <style>
     .news-card {
@@ -234,7 +234,6 @@ def _render_news_grid(items: list):
     }
     .news-card:hover {
         border-color: var(--border-hover);
-        transform: translateY(-1px);
     }
     .news-card .title {
         font-family: 'Sora', sans-serif;
@@ -282,11 +281,6 @@ def _render_news_grid(items: list):
         color: var(--faint);
         margin-left: auto;
     }
-    .news-card .meta a {
-        color: var(--accent);
-        text-decoration: none;
-        font-size: .82rem;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -295,41 +289,60 @@ def _render_news_grid(items: list):
     for i, it in enumerate(filtered):
         col = cols[i % 2]
         with col:
-            tickers_html = "".join(
-                f'<span class="tk">{t}</span>' for t in it.get("tickers", []))
-            when = ""
-            if it.get("published"):
-                try:
-                    when = it["published"].strftime("%d %b %H:%M")
-                except Exception:
-                    pass
-            link_html = (
-                f'<a href="{it["link"]}" target="_blank">Leer →</a>'
-                if it.get("link") else ""
-            )
-            summary = it.get("summary", "")
-            if len(summary) > 220:
-                summary = summary[:220] + "…"
-            st.markdown(
-                f"""
-                <div class="news-card">
-                  <div class="title">{_escape(it["title"])}</div>
-                  <div class="summary">{_escape(summary)}</div>
-                  <div class="meta">
-                    <span class="src">{_escape(it["source"])}</span>
-                    <span class="reg">{it["region"]}</span>
-                    {tickers_html}
-                    {link_html}
-                    <span class="when">{when}</span>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            _render_card(it)
+
+
+def _render_card(it: dict):
+    """Renderiza una sola card. HTML para el wrapper/badges, markdown nativo
+    para el link (asi no se rompe el parser con caracteres en el href)."""
+    # Sanitizar todo lo que va al HTML inline
+    title = _escape(it.get("title") or "")
+    source = _escape(it.get("source") or "")
+    region = _escape(it.get("region") or "")
+    summary = _escape((it.get("summary") or "")[:220])
+    if len(it.get("summary") or "") > 220:
+        summary = summary + "…"
+
+    # Tickers como badges
+    tickers_html = "".join(
+        f'<span class="tk">{_escape(t)}</span>'
+        for t in (it.get("tickers") or [])
+    )
+
+    when = ""
+    if it.get("published"):
+        try:
+            when = it["published"].strftime("%d %b %H:%M")
+        except Exception:
+            pass
+
+    # Wrapper sin el link (el link va aparte como markdown nativo)
+    st.markdown(
+        f'<div class="news-card">'
+        f'<div class="title">{title}</div>'
+        f'<div class="summary">{summary}</div>'
+        f'<div class="meta">'
+        f'<span class="src">{source}</span>'
+        f'<span class="reg">{region}</span>'
+        f'{tickers_html}'
+        f'<span class="when">{when}</span>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+    # Link como markdown nativo (Streamlit lo escapa solo)
+    if it.get("link"):
+        st.markdown(
+            f'<div style="margin-top:-8px;margin-bottom:14px;padding-left:1.1rem;">'
+            f'<a href="{_escape(it["link"])}" target="_blank" '
+            f'style="color:#34d399;font-size:.82rem;text-decoration:none;">'
+            f'Leer noticia →</a></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _escape(text: str) -> str:
+    """HTML-escape robusto. Usa stdlib html.escape para cubrir todos los chars."""
+    import html as _html
     if not text:
         return ""
-    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                .replace('"', "&quot;"))
+    return _html.escape(str(text), quote=True)

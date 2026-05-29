@@ -75,10 +75,19 @@ def _hash_id(text: str) -> str:
 
 
 def _clean_html(text: str) -> str:
-    """Strip HTML tags simple (sin parser para no instalar bs4)."""
+    """Strip HTML tags + decode entities + trim. Robusto a HTML mal formado."""
     if not text:
         return ""
-    text = re.sub(r"<[^>]+>", " ", text)
+    import html as _html
+    # 1. Decode HTML entities (&amp;, &nbsp;, etc) primero
+    text = _html.unescape(text)
+    # 2. Quitar tags (cualquier <...>)
+    text = re.sub(r"<[^>]*>", " ", text)
+    # 3. Quitar caracteres de control que rompen markdown/HTML downstream
+    text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+    # 4. Quitar pares de comillas/angulares sueltos que escaparon a tags
+    text = text.replace("<", "").replace(">", "")
+    # 5. Whitespace collapse
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
