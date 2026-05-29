@@ -16,7 +16,7 @@ from core.active_portfolio import (
 from core.ui import inject_css
 from views import (
     dashboard, cartera, allocation, performance, rebalanceo, contexto_ar,
-    research,
+    research, news,
 )
 
 
@@ -210,9 +210,9 @@ with col_ccy:
 selected = option_menu(
     menu_title=None,
     options=["Dashboard", "Cartera", "Allocation", "Performance",
-             "Rebalanceo", "Contexto AR", "Research IA"],
+             "Rebalanceo", "Contexto AR", "Briefing IA", "Research IA"],
     icons=["bar-chart-fill", "wallet2", "pie-chart-fill", "graph-up-arrow",
-           "sliders", "flag-fill", "stars"],
+           "sliders", "flag-fill", "newspaper", "stars"],
     orientation="horizontal",
     default_index=0,
     styles={
@@ -256,5 +256,7 @@ elif selected == "Rebalanceo":
     rebalanceo.render()
 elif selected == "Contexto AR":
     contexto_ar.render()
+elif selected == "Briefing IA":
+    news.render()
 elif selected == "Research IA":
     research.render()
