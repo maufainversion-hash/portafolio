@@ -234,8 +234,12 @@ def generate_briefing_stream(news_items: list, kind: str = "morning",
                 return
             if transient and attempt < max_retries:
                 wait = 2 * attempt
-                yield f"\n_{friendly} (intento {attempt}/{max_retries}, esperando {wait}s)_\n\n"
+                # Marcamos los mensajes de retry con un prefijo invisible
+                # (zero-width space + tag) para que la UI pueda filtrarlos.
+                yield (f"\n<!-- retry -->_{friendly} "
+                       f"(intento {attempt}/{max_retries}, esperando {wait}s)_\n\n")
                 time.sleep(wait)
                 continue
-            yield f"\n\n{friendly}"
+            # Fallo final: marcamos como error para que la UI no persista
+            yield f"\n<!-- error-final -->\n\n**No se pudo generar el briefing.** {friendly}"
             return

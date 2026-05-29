@@ -562,28 +562,25 @@ def markdown_to_pdf(md_text: str, titulo: str = "Informe de Cartera",
             pass
 
     pdf = InstitutionalPDF(
-        titulo="Informe de Cartera", fecha_label=fecha_label,
+        titulo=titulo, fecha_label=fecha_label,
         ifa_profile=ifa, logo_bytes=logo_bytes,
     )
     pdf.add_page()
 
-    # 1. KPIs header
     if context:
+        # Modo "Informe de cartera": KPIs + tabla concepto/monto + charts + analisis
         _emit_header_kpis(pdf, context)
-
-    # 2. Tabla concepto/monto
-    if context:
         _emit_section_title(pdf, "1", "Como evoluciono tu cartera")
         _emit_resumen_table(pdf, context)
-
-    # 3. Charts
-    if charts:
-        _emit_charts(pdf, charts)
-
-    # 4. Analisis del LLM
-    if md_text and md_text.strip():
-        _emit_section_title(pdf, "3", "Analisis detallado")
-        _render_md_body(pdf, md_text)
+        if charts:
+            _emit_charts(pdf, charts)
+        if md_text and md_text.strip():
+            _emit_section_title(pdf, "3", "Analisis detallado")
+            _render_md_body(pdf, md_text)
+    else:
+        # Modo "Briefing": solo el cuerpo markdown del LLM, sin secciones de cartera
+        if md_text and md_text.strip():
+            _render_md_body(pdf, md_text)
 
     out = pdf.output()
     if isinstance(out, (bytes, bytearray)):

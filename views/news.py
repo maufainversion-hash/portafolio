@@ -10,6 +10,7 @@ Layout:
     * Headlines en vivo (cards con filtros region/source/ticker)
     * Watchlist Impact (noticias que tocan tu cartera)
 """
+import re
 import streamlit as st
 
 from core.news import fetch_all_news, fetch_stats, FEEDS, has_feedparser
@@ -101,11 +102,16 @@ def render():
     if generar and has_api_key():
         _generar(kind, modelo, nivel, usar_pf)
     elif "news_last_brief" in st.session_state:
-        st.divider()
-        st.caption(f"Último briefing: **{st.session_state.get('news_last_kind_label')}** · {st.session_state.get('news_last_modelo')}")
-        st.markdown(st.session_state["news_last_brief"])
-        _download_briefing(st.session_state["news_last_brief"],
-                           st.session_state.get("news_last_kind_label", "briefing"))
+        clean = _clean_briefing_output(st.session_state["news_last_brief"])
+        if not _looks_like_only_errors(clean):
+            st.divider()
+            st.caption(f"Último briefing: **{st.session_state.get('news_last_kind_label')}** · {st.session_state.get('news_last_modelo')}")
+            st.markdown(clean)
+            _download_briefing(clean,
+                               st.session_state.get("news_last_kind_label", "briefing"))
+        else:
+            # Limpiamos el state si tiene basura de runs viejos con errores
+            del st.session_state["news_last_brief"]
 
     st.divider()
 
@@ -149,28 +155,67 @@ def _generar(kind: str, modelo: str, nivel: str, usar_pf: bool):
         buffer += chunk
         placeholder.markdown(buffer + " ▌")
 
-    placeholder.markdown(buffer)
+    placeholder.empty()
 
-    # Heuristica: si es solo error, no persistir
-    if (buffer.lstrip().startswith("**") and len(buffer.strip()) < 250) or \
-       len(buffer.strip()) < 200:
+    # Limpiamos los marcadores y mensajes de retry intermedios
+    clean = _clean_briefing_output(buffer)
+
+    # Si fue un error final o no hay contenido real, no persistimos ni mostramos botones
+    if "<!-- error-final -->" in buffer or _looks_like_only_errors(clean):
+        st.error(
+            "❌ No se pudo generar el briefing — Gemini está saturado o sin cuota. "
+            "Probá de nuevo en unos minutos o cambiá de modelo."
+        )
         return
 
-    st.session_state["news_last_brief"] = buffer
+    # Render limpio
+    st.markdown(clean)
+
+    st.session_state["news_last_brief"] = clean
     st.session_state["news_last_kind"] = kind
     st.session_state["news_last_kind_label"] = BRIEF_KINDS[kind]["label"]
     st.session_state["news_last_modelo"] = modelo
 
-    _download_briefing(buffer, BRIEF_KINDS[kind]["label"])
+    _download_briefing(clean, BRIEF_KINDS[kind]["label"])
+
+
+def _clean_briefing_output(buffer: str) -> str:
+    """Quita los marcadores de retry y deja solo el contenido real."""
+    import re
+    # Quitar lineas que empiezan con el marcador <!-- retry -->
+    cleaned = re.sub(r"<!-- retry -->_[^_]*_\n*", "", buffer)
+    cleaned = re.sub(r"<!-- error-final -->\n*", "", cleaned)
+    return cleaned.strip()
+
+
+def _looks_like_only_errors(text: str) -> bool:
+    """True si el output limpio NO tiene estructura de briefing real."""
+    if not text or len(text.strip()) < 60:
+        return True
+    # Heuristicas: un briefing real tiene markdown structure
+    has_heading = bool(re.search(r"^#{1,4}\s", text, re.MULTILINE))
+    has_bullet = bool(re.search(r"^[-*]\s", text, re.MULTILINE))
+    # Mensajes de error tipicos
+    looks_error = bool(re.search(
+        r"^(\*\*)?No se pudo|^(\*\*)?Error|saturad[oa]|cuota agotada",
+        text.strip(), re.IGNORECASE))
+    if looks_error and not has_heading:
+        return True
+    # Si tiene heading O bullet, es contenido legitimo
+    if has_heading or has_bullet:
+        return False
+    # Sin estructura y corto -> error
+    return len(text.strip()) < 200
 
 
 def _download_briefing(md: str, titulo: str):
     """Botones para descargar el briefing (PDF / Markdown)."""
     col_pdf, col_md = st.columns(2)
+    pdf_titulo = f"Briefing IA · {titulo}"
     with col_pdf:
         try:
             pdf_bytes = markdown_to_pdf(
-                md, titulo=titulo,
+                md, titulo=pdf_titulo,
                 context=None, charts=None,   # briefing no usa charts de portfolio
                 cliente_friendly=False,
             )
