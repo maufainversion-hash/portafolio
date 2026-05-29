@@ -100,111 +100,87 @@ BRIEF_KINDS = {
 }
 
 
-SYSTEM_PROMPT_NEWS = """Eres un Senior Macro Strategist + Financial Journalist
-con experiencia institucional (Bloomberg, Goldman Sachs Daily Macro, JP Morgan
-Market Wrap, FT). Tu rol es transformar un flujo de noticias financieras crudas
-(AR + Global) en un briefing premium que un asesor financiero pueda mandar a
-sus clientes o leer para tomar decisiones.
+SYSTEM_PROMPT_NEWS = """Sos un Senior Macro Strategist + Financial Journalist (estilo Bloomberg/Goldman/FT). Transformas noticias crudas en briefings premium para IFAs argentinos y sus clientes.
 
-REGLAS DURAS
-1. NUNCA inventes noticias. Trabajas solo con las que vienen en el input.
-2. Si una noticia esta en otro idioma (ingles), traducila al espanol natural
-   (no literal). Si esta en espanol, manten la redaccion original o ajustala.
-3. NUNCA des recomendaciones especificas de compra/venta. Usa lenguaje
-   institucional ("podria considerarse", "el mercado vigila", "implica
-   monitorear", "factor a observar").
-4. Filtra ruido: descarta corporate fluff sin impacto, anuncios irrelevantes,
-   clickbait, opiniones sin sustento. Prioriza lo que mueve mercados.
-5. Agrupa noticias relacionadas en un mismo bloque cuando sean parte del mismo
-   evento (ej: varias notas sobre la Fed o sobre Nvidia se consolidan).
-6. Explica POR QUE importa cada noticia: causalidad economica, sectores
-   afectados, riesgos, oportunidades. No solo resumas.
-7. Distingue informacion ya conocida del mercado de informacion NUEVA o
-   SORPRENDENTE.
+REGLAS:
+- Trabajas SOLO con las noticias del input. Nunca inventes.
+- Traducis ingles al espanol natural.
+- Nunca recomendaciones directas de compra/venta. Lenguaje institucional ("el mercado vigila", "factor a observar").
+- Filtra ruido (corporate fluff, clickbait, anuncios sin impacto). Prioriza lo que mueve mercados.
+- Agrupa noticias del mismo evento en un solo bloque.
+- Explica POR QUE importa (causalidad, sectores, riesgos, oportunidades), no solo resumas.
+- Distingue info ya conocida de info NUEVA o sorprendente.
 
-ESTILO
-- Markdown limpio. Headings con icono al inicio cuando suma claridad
-  (📉 política monetaria, 💵 dolar, 🚀 IPOs, 📈 mercado, 🛢 commodities,
-  ⚠ riesgo). Sin abusar de emojis.
-- Parrafos cortos, narrativa Bloomberg / FT.
-- Conciso. Cada parrafo tiene que aportar.
-- Lenguaje en espanol rioplatense neutral. Anglicismos financieros (Fed,
-  rally, sell-off, earnings, guidance) se usan sin traducir.
+ESTILO:
+- Markdown limpio. Headings con icono donde suma (📉💵🚀📈🛢⚠), sin abusar.
+- Parrafos cortos, narrativa Bloomberg/FT, conciso. Espanol rioplatense neutral. Anglicismos financieros (Fed, rally, sell-off, earnings) se mantienen.
 
-CONTEXTO ARGENTINO
-- Sabes que BCRA = Banco Central, MEP/CCL = dolares financieros, CEDEARs =
-  certificados argentinos de acciones extranjeras, AE38/GD30/AL30 = bonos
-  hard dollar, bonos CER = atados a inflacion. El usuario tipico es un IFA
-  argentino y un cliente con conocimientos.
-
-OUTPUT
-Markdown profesional con la estructura solicitada en el USER prompt.
+CONTEXTO AR: BCRA, MEP/CCL, CEDEARs (acciones extranjeras en pesos), AE38/GD30/AL30 (bonos hard dollar), bonos CER (atan a inflacion).
 """
 
 
 def _build_user_prompt(news_items: list, kind: str, nivel: str = "intermedio",
                        portfolio_context: Optional[dict] = None) -> str:
-    """Arma el USER prompt para el briefing."""
+    """Arma el USER prompt para el briefing. Formato compacto para minimizar tokens."""
     info = BRIEF_KINDS.get(kind, BRIEF_KINDS["morning"])
     nivel_info = NIVELES.get(nivel, NIVELES["intermedio"])
     sections_md = "\n".join(f"- {s}" for s in info["sections"])
 
-    # Compactamos las noticias para el prompt: solo title + source + region
-    # + summary truncado + tickers detectados.
-    news_compact = []
-    for it in news_items[:120]:  # limit explicito
-        news_compact.append({
-            "title":   it["title"],
-            "summary": it["summary"][:240] if it.get("summary") else "",
-            "source":  it["source"],
-            "region":  it["region"],
-            "tickers": it.get("tickers") or [],
-            "pub":     it["published"].isoformat() if it.get("published") else None,
-        })
-    news_json = json.dumps(news_compact, ensure_ascii=False, indent=1)
+    # Formato compacto: una linea por noticia. [AR|Src] Title — Summary (TK)
+    # + dedup soft por prefijo de titulo (mismo evento en varios feeds).
+    seen_prefixes = set()
+    lines = []
+    for it in news_items:
+        title = (it.get("title") or "").strip()
+        if not title:
+            continue
+        # Dedup: si los primeros 50 chars del titulo ya aparecieron, skip
+        key = title[:50].lower()
+        if key in seen_prefixes:
+            continue
+        seen_prefixes.add(key)
+
+        region = "AR" if it["region"] == "AR" else "GL"
+        src = it["source"]
+        # Summary mas corto (110 chars). Si esta vacio, no agregamos separador.
+        summary = (it.get("summary") or "")[:110]
+        tickers = it.get("tickers") or []
+        tk_str = f" ({','.join(tickers)})" if tickers else ""
+        sum_str = f" — {summary}" if summary else ""
+        lines.append(f"[{region}|{src}] {title}{sum_str}{tk_str}")
+        if len(lines) >= 70:  # cap a 70 items unicos
+            break
+    news_block = "\n".join(lines)
 
     pf_block = ""
     if portfolio_context:
-        port = portfolio_context.get("portfolio") or {}
         positions = portfolio_context.get("positions") or []
-        ticker_list = [p.get("ticker") for p in positions]
-        pf_block = (
-            "\n\n## Contexto del portfolio del cliente\n"
-            f"- Valor total ARS: {port.get('valor_total_ars')}\n"
-            f"- Tipos: {port.get('tipos_presentes')}\n"
-            f"- Tickers: {ticker_list}\n"
-        )
+        # Solo tickers y tipos, sin datos financieros extra
+        tickers = [p.get("ticker") for p in positions if p.get("ticker")]
+        tipos = sorted({p.get("tipo") for p in positions if p.get("tipo")})
+        if tickers:
+            pf_block = (f"\n## Portfolio del cliente\n"
+                        f"Tickers: {','.join(tickers)}. Tipos: {','.join(tipos)}.\n")
 
-    return f"""Genera un **{info['label']}** con la siguiente estructura:
+    return f"""Genera **{info['label']}** ({date.today().strftime("%d/%m/%Y")}).
 
-## Secciones obligatorias
-
+## Estructura obligatoria
 {sections_md}
 
-## Nivel de complejidad del lenguaje
-
+## Nivel de lenguaje
 {nivel_info['instruccion']}
 {pf_block}
-## Fecha del briefing
+## Noticias del dia ({len(lines)} headlines)
 
-{date.today().strftime("%d/%m/%Y")}
+{news_block}
 
-## Noticias del dia (input crudo)
-
-```json
-{news_json}
-```
-
-## Indicaciones finales
-
-- Empezá con `# {info['label']} — {date.today().strftime("%d/%m/%Y")}` como titulo principal.
-- Cada seccion como `## ...` con icono opcional al inicio.
-- Dentro de cada seccion, los headlines clave como `### ...`.
-- Bullets para listas. Negrita para tickers y cifras clave.
-- Si una seccion no tiene material relevante en las noticias provistas,
-  decilo brevemente ("Sin novedades materiales en este corte") en lugar de
-  rellenar.
-- Foco en CAUSALIDAD ECONOMICA y POR QUE IMPORTA, no en repetir headlines.
+## Formato de salida
+- Titulo `# {info['label']} — {date.today().strftime("%d/%m/%Y")}`.
+- Secciones `## ...` con icono donde suma claridad.
+- Headlines clave como `### ...`.
+- Bullets, negrita para tickers y cifras.
+- Si una seccion no tiene material relevante, "Sin novedades materiales en este corte" (no rellenes).
+- Foco en CAUSALIDAD y POR QUE IMPORTA, no repetir headlines.
 """
 
 
