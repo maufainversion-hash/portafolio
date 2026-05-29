@@ -12,7 +12,7 @@ Layout:
 """
 import streamlit as st
 
-from core.news import fetch_all_news, fetch_stats, FEEDS
+from core.news import fetch_all_news, fetch_stats, FEEDS, has_feedparser
 from core.news_ai import BRIEF_KINDS, generate_briefing_stream
 from core.ai import MODELOS, NIVELES, has_api_key, DEFAULT_MODEL
 from core.ai_data import build_portfolio_context
@@ -27,6 +27,15 @@ def render():
         "automatizado. Cliente activo: "
         f"**{get_active_portfolio_label()}**"
     )
+
+    if not has_feedparser():
+        st.error(
+            "**Falta el paquete `feedparser`.** Streamlit Cloud todavia no "
+            "instaló todas las dependencias. Esperá 1-2 min y refrescá la "
+            "página, o reiniciá la app desde **Manage app → Reboot**. Si el "
+            "problema persiste, revisá los logs de install en Manage app."
+        )
+        return
 
     # --- Stats compactas ---
     with st.spinner("Actualizando feeds..."):

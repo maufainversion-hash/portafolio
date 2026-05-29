@@ -13,8 +13,22 @@ import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Optional
-import feedparser
 import streamlit as st
+
+# Import defensivo: si feedparser no esta instalado (puede pasar si Streamlit
+# Cloud no termino de instalar las deps del ultimo redeploy), la app no debe
+# crashear entera. has_feedparser() permite a las vistas mostrar un mensaje
+# amable en lugar de un traceback rojo.
+try:
+    import feedparser
+    _HAS_FEEDPARSER = True
+except ImportError:
+    feedparser = None
+    _HAS_FEEDPARSER = False
+
+
+def has_feedparser() -> bool:
+    return _HAS_FEEDPARSER
 
 
 # Lista curada de feeds. (label, url, region)
@@ -95,6 +109,8 @@ def _parse_date(entry) -> Optional[datetime]:
 @st.cache_data(ttl=900, show_spinner=False)
 def _fetch_feed(url: str, source: str, region: str) -> list[dict]:
     """Trae un feed y normaliza items. Devuelve lista (puede estar vacia)."""
+    if not _HAS_FEEDPARSER:
+        return []
     try:
         f = feedparser.parse(url)
         out = []
